@@ -7,7 +7,7 @@ import asyncio
 
 
 # --- 配置区域 ---
-BASE_URL = os.getenv('GEMINI_FLOW2API_URL', 'http://127.0.0.1:8106')
+BASE_URL = os.getenv('GEMINI_FLOW2API_URL', 'http://127.0.0.1:8000')
 BACKEND_URL = BASE_URL + "/v1/chat/completions"
 API_KEY = os.getenv('GEMINI_FLOW2API_APIKEY', 'Bearer han1234')
 if API_KEY is None:
