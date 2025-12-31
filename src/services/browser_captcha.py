@@ -5,10 +5,19 @@
 import asyncio
 import time
 import re
+import os
 from typing import Optional, Dict
-from playwright.async_api import async_playwright, Browser, BrowserContext
+from playwright.async_api import async_playwright
 
 from ..core.logger import debug_logger
+
+# 尝试导入 stealth 模块
+try:
+    from playwright_stealth import stealth_async
+    STEALTH_AVAILABLE = True
+except ImportError:
+    STEALTH_AVAILABLE = False
+    debug_logger.log_warning("[BrowserCaptcha] playwright-stealth 未安装，伪装功能不可用。建议: pip install playwright-stealth")
 
 
 def parse_proxy_url(proxy_url: str) -> Optional[Dict[str, str]]:
@@ -81,13 +90,16 @@ class BrowserCaptchaService:
     _lock = asyncio.Lock()
 
     def __init__(self, db=None):
-        """初始化服务（始终使用无头模式）"""
-        self.headless = True  # 始终无头
+        """初始化服务"""
+        # self.headless = True  # 有头模式（调试/登录）
+        self.headless = False  # 有头模式（调试/登录）
         self.playwright = None
-        self.browser: Optional[Browser] = None
+        self.context = None  # 使用 persistent context
         self._initialized = False
         self.website_key = "6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV"
         self.db = db
+        # 使用固定目录保存浏览器状态
+        self.user_data_dir = os.path.join(os.getcwd(), "browser_data")
 
     @classmethod
     async def get_instance(cls, db=None) -> 'BrowserCaptchaService':
@@ -115,15 +127,25 @@ class BrowserCaptchaService:
             debug_logger.log_info(f"[BrowserCaptcha] 正在启动浏览器... (proxy={proxy_url or 'None'})")
             self.playwright = await async_playwright().start()
 
-            # 配置浏览器启动参数
+            # 配置浏览器启动参数 - 强化反检测
             launch_options = {
                 'headless': self.headless,
+                'channel': 'chrome',  # 使用系统 Chrome
                 'args': [
                     '--disable-blink-features=AutomationControlled',
                     '--disable-dev-shm-usage',
                     '--no-sandbox',
-                    '--disable-setuid-sandbox'
-                ]
+                    '--disable-setuid-sandbox',
+                    '--disable-infobars',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding',
+                    '--disable-features=IsolateOrigins,site-per-process',
+                    '--disable-web-security',
+                    '--disable-features=TranslateUI',
+                    '--lang=en-US',
+                ],
+                'ignore_default_args': ['--enable-automation'],  # 移除自动化标志
             }
 
             # 如果有代理，解析并添加代理配置
@@ -136,9 +158,13 @@ class BrowserCaptchaService:
                 else:
                     debug_logger.log_warning(f"[BrowserCaptcha] 代理URL格式错误: {proxy_url}")
 
-            self.browser = await self.playwright.chromium.launch(**launch_options)
+            # 使用 persistent context 加载真实 Chrome profile
+            self.context = await self.playwright.chromium.launch_persistent_context(
+                self.user_data_dir,
+                **launch_options
+            )
             self._initialized = True
-            debug_logger.log_info(f"[BrowserCaptcha] ✅ 浏览器已启动 (headless={self.headless}, proxy={proxy_url or 'None'})")
+            debug_logger.log_info(f"[BrowserCaptcha] ✅ 浏览器已启动 (profile={self.user_data_dir})")
         except Exception as e:
             debug_logger.log_error(f"[BrowserCaptcha] ❌ 浏览器启动失败: {str(e)}")
             raise
@@ -156,17 +182,53 @@ class BrowserCaptchaService:
             await self.initialize()
 
         start_time = time.time()
-        context = None
+        page = None
 
         try:
-            # 创建新的上下文
-            context = await self.browser.new_context(
-                viewport={'width': 1920, 'height': 1080},
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                locale='en-US',
-                timezone_id='America/New_York'
-            )
-            page = await context.new_page()
+            # 直接在 persistent context 中创建新标签页（复用登录状态）
+            page = await self.context.new_page()
+
+            # 应用 stealth 伪装（如果可用）
+            if STEALTH_AVAILABLE:
+                await stealth_async(page)
+                debug_logger.log_info("[BrowserCaptcha] ✅ Stealth 伪装已应用")
+
+            # 注入额外的反检测脚本
+            await page.add_init_script("""
+                // 隐藏 webdriver 属性
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+
+                // 修改 plugins 数量
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5]
+                });
+
+                // 修改 languages
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['en-US', 'en']
+                });
+
+                // 隐藏自动化相关属性
+                delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+                delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+                delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+
+                // 伪造 chrome 对象
+                window.chrome = {
+                    runtime: {},
+                    loadTimes: function() {},
+                    csi: function() {},
+                    app: {}
+                };
+
+                // 修改 permissions
+                const originalQuery = window.navigator.permissions.query;
+                window.navigator.permissions.query = (parameters) => (
+                    parameters.name === 'notifications' ?
+                        Promise.resolve({ state: Notification.permission }) :
+                        originalQuery(parameters)
+                );
+            """)
 
             website_url = f"https://labs.google/fx/tools/flow/project/{project_id}"
 
@@ -283,25 +345,25 @@ class BrowserCaptchaService:
             debug_logger.log_error(f"[BrowserCaptcha] 获取token异常: {str(e)}")
             return None
         finally:
-            # 关闭上下文
-            if context:
+            # 关闭标签页（释放资源，支持并发）
+            if page:
                 try:
-                    await context.close()
+                    await page.close()
                 except:
                     pass
 
     async def close(self):
         """关闭浏览器"""
         try:
-            if self.browser:
+            if self.context:
                 try:
-                    await self.browser.close()
+                    await self.context.close()
                 except Exception as e:
                     # 忽略连接关闭错误（正常关闭场景）
                     if "Connection closed" not in str(e):
                         debug_logger.log_warning(f"[BrowserCaptcha] 关闭浏览器时出现异常: {str(e)}")
                 finally:
-                    self.browser = None
+                    self.context = None
 
             if self.playwright:
                 try:

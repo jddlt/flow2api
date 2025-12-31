@@ -51,6 +51,25 @@ MODEL_CONFIG = {
     # ========== 文生视频 (T2V - Text to Video) ==========
     # 不支持上传图片，只使用文本提示词生成
 
+    # ===== veo_3_1 高质量模型 (不带 fast) =====
+    # veo_3_1_t2v_portrait (竖屏 - 高质量)
+    "veo_3_1_t2v_portrait": {
+        "type": "video",
+        "video_type": "t2v",
+        "model_key": "veo_3_1_t2v_portrait",
+        "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+        "supports_images": False
+    },
+    # veo_3_1_t2v_landscape (横屏 - 高质量)
+    "veo_3_1_t2v_landscape": {
+        "type": "video",
+        "video_type": "t2v",
+        "model_key": "veo_3_1_t2v",
+        "aspect_ratio": "VIDEO_ASPECT_RATIO_LANDSCAPE",
+        "supports_images": False
+    },
+
+    # ===== veo_3_1 快速模型 (带 fast) =====
     # veo_3_1_t2v_fast_portrait (竖屏)
     # 上游模型名: veo_3_1_t2v_fast_portrait
     "veo_3_1_t2v_fast_portrait": {
@@ -105,16 +124,40 @@ MODEL_CONFIG = {
     # ========== 首尾帧模型 (I2V - Image to Video) ==========
     # 支持1-2张图片：1张作为首帧，2张作为首尾帧
 
-    # veo_3_1_i2v_s_fast_fl (需要新增横竖屏)
-    "veo_3_1_i2v_s_fast_fl_portrait": {
+    # ===== veo_3_1 高质量模型 (不带 fast) =====
+    # veo_3_1_i2v_s_fl_portrait (竖屏 - 高质量)
+    "veo_3_1_i2v_s_fl_portrait": {
         "type": "video",
         "video_type": "i2v",
-        "model_key": "veo_3_1_i2v_s_fast_fl",
+        "model_key": "veo_3_1_i2v_s_portrait_fl",
         "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
         "supports_images": True,
         "min_images": 1,
         "max_images": 2
     },
+    # veo_3_1_i2v_s_fl_landscape (横屏 - 高质量)
+    "veo_3_1_i2v_s_fl_landscape": {
+        "type": "video",
+        "video_type": "i2v",
+        "model_key": "veo_3_1_i2v_s_fl",
+        "aspect_ratio": "VIDEO_ASPECT_RATIO_LANDSCAPE",
+        "supports_images": True,
+        "min_images": 1,
+        "max_images": 2
+    },
+
+    # ===== veo_3_1 快速模型 (带 fast) =====
+    # veo_3_1_i2v_s_fast_fl_portrait (竖屏 - 快速)
+    "veo_3_1_i2v_s_fast_fl_portrait": {
+        "type": "video",
+        "video_type": "i2v",
+        "model_key": "veo_3_1_i2v_s_fast_portrait_fl",
+        "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+        "supports_images": True,
+        "min_images": 1,
+        "max_images": 2
+    },
+    # veo_3_1_i2v_s_fast_fl_landscape (横屏 - 快速)
     "veo_3_1_i2v_s_fast_fl_landscape": {
         "type": "video",
         "video_type": "i2v",
@@ -504,8 +547,59 @@ class GenerationHandler:
             min_images = model_config.get("min_images", 0)
             max_images = model_config.get("max_images", 0)
 
-            # 图片数量
+            # 图片数量（需要在模型升级逻辑之前计算）
             image_count = len(images) if images else 0
+
+            # 高级会员使用 ultra 模型
+            # 注意：图片数量会影响 i2v 模型名称
+            # - 2张图（首尾帧）: 带 _fl 后缀
+            # - 1张图（仅首帧）: 不带 _fl 后缀
+            if token.user_paygate_tier == "PAYGATE_TIER_TWO":
+                original_model_key = model_config["model_key"]
+
+                # ===== 文生视频 T2V =====
+                # 快速模型: veo_3_1_t2v_fast -> veo_3_1_t2v_fast_ultra
+                if original_model_key == "veo_3_1_t2v_fast":
+                    model_config = {**model_config, "model_key": "veo_3_1_t2v_fast_ultra"}
+                    debug_logger.log_info(f"[GENERATION] 高级会员升级模型: {original_model_key} -> {model_config['model_key']}")
+                elif original_model_key == "veo_3_1_t2v_fast_portrait":
+                    model_config = {**model_config, "model_key": "veo_3_1_t2v_fast_ultra_portrait"}
+                    debug_logger.log_info(f"[GENERATION] 高级会员升级模型: {original_model_key} -> {model_config['model_key']}")
+                # 高质量模型: veo_3_1_t2v -> veo_3_1_t2v_ultra
+                elif original_model_key == "veo_3_1_t2v":
+                    model_config = {**model_config, "model_key": "veo_3_1_t2v_ultra"}
+                    debug_logger.log_info(f"[GENERATION] 高级会员升级模型: {original_model_key} -> {model_config['model_key']}")
+                elif original_model_key == "veo_3_1_t2v_portrait":
+                    model_config = {**model_config, "model_key": "veo_3_1_t2v_ultra_portrait"}
+                    debug_logger.log_info(f"[GENERATION] 高级会员升级模型: {original_model_key} -> {model_config['model_key']}")
+
+                # ===== 图生视频 I2V (快速模型) =====
+                elif original_model_key == "veo_3_1_i2v_s_fast_fl":
+                    if image_count == 1:
+                        model_config = {**model_config, "model_key": "veo_3_1_i2v_s_fast_ultra"}
+                    else:
+                        model_config = {**model_config, "model_key": "veo_3_1_i2v_s_fast_ultra_fl"}
+                    debug_logger.log_info(f"[GENERATION] 高级会员升级模型: {original_model_key} -> {model_config['model_key']} (图片数: {image_count})")
+                elif original_model_key == "veo_3_1_i2v_s_fast_portrait_fl":
+                    if image_count == 1:
+                        model_config = {**model_config, "model_key": "veo_3_1_i2v_s_fast_portrait_ultra"}
+                    else:
+                        model_config = {**model_config, "model_key": "veo_3_1_i2v_s_fast_portrait_ultra_fl"}
+                    debug_logger.log_info(f"[GENERATION] 高级会员升级模型: {original_model_key} -> {model_config['model_key']} (图片数: {image_count})")
+
+                # ===== 图生视频 I2V (高质量模型) =====
+                elif original_model_key == "veo_3_1_i2v_s_fl":
+                    if image_count == 1:
+                        model_config = {**model_config, "model_key": "veo_3_1_i2v_s_ultra"}
+                    else:
+                        model_config = {**model_config, "model_key": "veo_3_1_i2v_s_ultra_fl"}
+                    debug_logger.log_info(f"[GENERATION] 高级会员升级模型: {original_model_key} -> {model_config['model_key']} (图片数: {image_count})")
+                elif original_model_key == "veo_3_1_i2v_s_portrait_fl":
+                    if image_count == 1:
+                        model_config = {**model_config, "model_key": "veo_3_1_i2v_s_portrait_ultra"}
+                    else:
+                        model_config = {**model_config, "model_key": "veo_3_1_i2v_s_portrait_ultra_fl"}
+                    debug_logger.log_info(f"[GENERATION] 高级会员升级模型: {original_model_key} -> {model_config['model_key']} (图片数: {image_count})")
 
             # ========== 验证和处理图片 ==========
 
