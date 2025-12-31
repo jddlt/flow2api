@@ -554,26 +554,19 @@ class GenerationHandler:
             # 注意：图片数量会影响 i2v 模型名称
             # - 2张图（首尾帧）: 带 _fl 后缀
             # - 1张图（仅首帧）: 不带 _fl 后缀
+            # 注意：高质量模型（不带 fast）不区分 Ultra，只有快速模型才有 Ultra 版本
             if token.user_paygate_tier == "PAYGATE_TIER_TWO":
                 original_model_key = model_config["model_key"]
 
-                # ===== 文生视频 T2V =====
-                # 快速模型: veo_3_1_t2v_fast -> veo_3_1_t2v_fast_ultra
+                # ===== 文生视频 T2V (仅快速模型有 Ultra) =====
                 if original_model_key == "veo_3_1_t2v_fast":
                     model_config = {**model_config, "model_key": "veo_3_1_t2v_fast_ultra"}
                     debug_logger.log_info(f"[GENERATION] 高级会员升级模型: {original_model_key} -> {model_config['model_key']}")
                 elif original_model_key == "veo_3_1_t2v_fast_portrait":
-                    model_config = {**model_config, "model_key": "veo_3_1_t2v_fast_ultra_portrait"}
-                    debug_logger.log_info(f"[GENERATION] 高级会员升级模型: {original_model_key} -> {model_config['model_key']}")
-                # 高质量模型: veo_3_1_t2v -> veo_3_1_t2v_ultra
-                elif original_model_key == "veo_3_1_t2v":
-                    model_config = {**model_config, "model_key": "veo_3_1_t2v_ultra"}
-                    debug_logger.log_info(f"[GENERATION] 高级会员升级模型: {original_model_key} -> {model_config['model_key']}")
-                elif original_model_key == "veo_3_1_t2v_portrait":
-                    model_config = {**model_config, "model_key": "veo_3_1_t2v_ultra_portrait"}
+                    model_config = {**model_config, "model_key": "veo_3_1_t2v_fast_portrait_ultra"}
                     debug_logger.log_info(f"[GENERATION] 高级会员升级模型: {original_model_key} -> {model_config['model_key']}")
 
-                # ===== 图生视频 I2V (快速模型) =====
+                # ===== 图生视频 I2V (仅快速模型有 Ultra) =====
                 elif original_model_key == "veo_3_1_i2v_s_fast_fl":
                     if image_count == 1:
                         model_config = {**model_config, "model_key": "veo_3_1_i2v_s_fast_ultra"}
@@ -585,20 +578,6 @@ class GenerationHandler:
                         model_config = {**model_config, "model_key": "veo_3_1_i2v_s_fast_portrait_ultra"}
                     else:
                         model_config = {**model_config, "model_key": "veo_3_1_i2v_s_fast_portrait_ultra_fl"}
-                    debug_logger.log_info(f"[GENERATION] 高级会员升级模型: {original_model_key} -> {model_config['model_key']} (图片数: {image_count})")
-
-                # ===== 图生视频 I2V (高质量模型) =====
-                elif original_model_key == "veo_3_1_i2v_s_fl":
-                    if image_count == 1:
-                        model_config = {**model_config, "model_key": "veo_3_1_i2v_s_ultra"}
-                    else:
-                        model_config = {**model_config, "model_key": "veo_3_1_i2v_s_ultra_fl"}
-                    debug_logger.log_info(f"[GENERATION] 高级会员升级模型: {original_model_key} -> {model_config['model_key']} (图片数: {image_count})")
-                elif original_model_key == "veo_3_1_i2v_s_portrait_fl":
-                    if image_count == 1:
-                        model_config = {**model_config, "model_key": "veo_3_1_i2v_s_portrait_ultra"}
-                    else:
-                        model_config = {**model_config, "model_key": "veo_3_1_i2v_s_portrait_ultra_fl"}
                     debug_logger.log_info(f"[GENERATION] 高级会员升级模型: {original_model_key} -> {model_config['model_key']} (图片数: {image_count})")
 
             # ========== 验证和处理图片 ==========
