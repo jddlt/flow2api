@@ -57,6 +57,22 @@ class DebugLogger:
         """Write separator line"""
         self.logger.info(char * length)
 
+    def _truncate_base64(self, obj: Any, max_length: int = 100) -> Any:
+        """递归截断对象中的 base64 数据"""
+        if isinstance(obj, dict):
+            result = {}
+            for key, value in obj.items():
+                # 检查是否是 base64 相关字段
+                if key in ("rawImageBytes", "imageBytes", "base64", "data") and isinstance(value, str) and len(value) > max_length:
+                    result[key] = f"{value[:max_length]}... (truncated, total {len(value)} chars)"
+                else:
+                    result[key] = self._truncate_base64(value, max_length)
+            return result
+        elif isinstance(obj, list):
+            return [self._truncate_base64(item, max_length) for item in obj]
+        else:
+            return obj
+
     def log_request(
         self,
         method: str,
@@ -106,7 +122,9 @@ class DebugLogger:
             if body is not None:
                 self.logger.info("\n📦 Request Body:")
                 if isinstance(body, (dict, list)):
-                    body_str = json.dumps(body, indent=2, ensure_ascii=False)
+                    # 截断 base64 数据
+                    truncated_body = self._truncate_base64(body)
+                    body_str = json.dumps(truncated_body, indent=2, ensure_ascii=False)
                     self.logger.info(body_str)
                 else:
                     self.logger.info(str(body))
