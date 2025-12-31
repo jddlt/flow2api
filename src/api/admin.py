@@ -4,6 +4,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional, List
 import secrets
+import json
+import os
+from datetime import datetime, timedelta, timezone
 from ..core.auth import AuthManager
 from ..core.database import Database
 from ..services.token_manager import TokenManager
@@ -16,8 +19,85 @@ token_manager: TokenManager = None
 proxy_manager: ProxyManager = None
 db: Database = None
 
-# Store active admin session tokens (in production, use Redis or database)
-active_admin_tokens = set()
+# Admin session token file path
+ADMIN_TOKENS_FILE = os.path.join(os.getcwd(), "data", "admin_tokens.json")
+
+# Token validity period (3 months)
+TOKEN_VALIDITY_DAYS = 90
+
+
+def _ensure_data_dir():
+    """Ensure data directory exists"""
+    data_dir = os.path.dirname(ADMIN_TOKENS_FILE)
+    if not os.path.exists(data_dir):
+        os.makedirs(data_dir, exist_ok=True)
+
+
+def _load_admin_tokens() -> dict:
+    """Load admin tokens from file"""
+    _ensure_data_dir()
+    if os.path.exists(ADMIN_TOKENS_FILE):
+        try:
+            with open(ADMIN_TOKENS_FILE, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return {}
+    return {}
+
+
+def _save_admin_tokens(tokens: dict):
+    """Save admin tokens to file"""
+    _ensure_data_dir()
+    with open(ADMIN_TOKENS_FILE, 'w') as f:
+        json.dump(tokens, f, indent=2)
+
+
+def _cleanup_expired_tokens(tokens: dict) -> dict:
+    """Remove expired tokens"""
+    now = datetime.now(timezone.utc).isoformat()
+    return {k: v for k, v in tokens.items() if v.get("expires_at", "") > now}
+
+
+def _is_token_valid(token: str) -> bool:
+    """Check if admin token is valid and not expired"""
+    tokens = _load_admin_tokens()
+    tokens = _cleanup_expired_tokens(tokens)
+    _save_admin_tokens(tokens)  # Save cleaned tokens
+
+    if token not in tokens:
+        return False
+
+    token_data = tokens[token]
+    expires_at = token_data.get("expires_at", "")
+    now = datetime.now(timezone.utc).isoformat()
+    return expires_at > now
+
+
+def _add_admin_token(token: str):
+    """Add a new admin token with expiration"""
+    tokens = _load_admin_tokens()
+    tokens = _cleanup_expired_tokens(tokens)
+
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=TOKEN_VALIDITY_DAYS)).isoformat()
+    tokens[token] = {
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": expires_at
+    }
+
+    _save_admin_tokens(tokens)
+
+
+def _remove_admin_token(token: str):
+    """Remove an admin token"""
+    tokens = _load_admin_tokens()
+    if token in tokens:
+        del tokens[token]
+        _save_admin_tokens(tokens)
+
+
+def _clear_all_admin_tokens():
+    """Clear all admin tokens (for password change)"""
+    _save_admin_tokens({})
 
 
 def set_dependencies(tm: TokenManager, pm: ProxyManager, database: Database):
@@ -116,8 +196,8 @@ async def verify_admin_token(authorization: str = Header(None)):
 
     token = authorization[7:]
 
-    # Check if token is in active session tokens
-    if token not in active_admin_tokens:
+    # Check if token is valid and not expired
+    if not _is_token_valid(token):
         raise HTTPException(status_code=401, detail="Invalid or expired admin token")
 
     return token
@@ -136,8 +216,8 @@ async def admin_login(request: LoginRequest):
     # Generate independent session token
     session_token = f"admin-{secrets.token_urlsafe(32)}"
 
-    # Store in active tokens
-    active_admin_tokens.add(session_token)
+    # Store in file with expiration
+    _add_admin_token(session_token)
 
     return {
         "success": True,
@@ -149,7 +229,7 @@ async def admin_login(request: LoginRequest):
 @router.post("/api/admin/logout")
 async def admin_logout(token: str = Depends(verify_admin_token)):
     """Admin logout - invalidate session token"""
-    active_admin_tokens.discard(token)
+    _remove_admin_token(token)
     return {"success": True, "message": "退出登录成功"}
 
 
@@ -176,7 +256,7 @@ async def change_password(
     await db.reload_config_to_memory()
 
     # 🔑 Invalidate all admin session tokens (force re-login for security)
-    active_admin_tokens.clear()
+    _clear_all_admin_tokens()
 
     return {"success": True, "message": "密码修改成功,请重新登录"}
 

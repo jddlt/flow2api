@@ -69,6 +69,7 @@ class BrowserCaptchaService:
             # 配置启动参数
             launch_options = {
                 'headless': self.headless,
+                'channel': 'chrome',  # 使用系统 Chrome
                 'user_data_dir': self.user_data_dir, # 指定数据目录
                 'viewport': {'width': 1280, 'height': 720}, # 设置默认窗口大小
                 'args': [

@@ -563,7 +563,7 @@ class FlowClient:
             at: Access Token
             project_id: 项目ID
             prompt: 提示词
-            model_key: veo_3_1_i2v_s_fast_fl等
+            model_key: veo_3_1_i2v_s_fast等（不带_fl后缀）
             aspect_ratio: 视频宽高比
             start_media_id: 起始帧mediaId
             user_paygate_tier: 用户等级
@@ -571,7 +571,8 @@ class FlowClient:
         Returns:
             同 generate_video_text
         """
-        url = f"{self.api_base_url}/video:batchAsyncGenerateVideoStartAndEndImage"
+        # 仅首帧使用不同的 API 端点
+        url = f"{self.api_base_url}/video:batchAsyncGenerateVideoStartImage"
 
         # 获取 reCAPTCHA token
         recaptcha_token = await self._get_recaptcha_token(project_id) or ""

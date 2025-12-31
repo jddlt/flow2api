@@ -54,3 +54,6 @@ logs.txt
 *.cache
 
 browser_data
+.venv/
+ven/
+*.json
