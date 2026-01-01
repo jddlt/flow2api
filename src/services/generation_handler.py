@@ -478,15 +478,65 @@ class GenerationHandler:
                 image_inputs=image_inputs
             )
 
-            # 提取URL
+            # 提取URL和mediaId
             media = result.get("media", [])
             if not media:
                 yield self._create_error_response("生成结果为空")
                 return
 
-            image_url = media[0]["image"]["generatedImage"]["fifeUrl"]
+            image_data = media[0]["image"]["generatedImage"]
+            image_url = image_data["fifeUrl"]
 
-            # 缓存图片 (如果启用)
+            # GEM_PIX_2 模型需要高清化处理
+            debug_logger.log_info(f"[GENERATION] model_config: {model_config}, model_name: {model_config.get('model_name')}")
+            if model_config["model_name"] == "GEM_PIX_2":
+                try:
+                    if stream:
+                        yield self._create_stream_chunk("正在进行 4K 高清化处理...\n")
+
+                    # 获取 mediaId (从 generatedImage.mediaGenerationId 字段)
+                    media_id = image_data.get("mediaGenerationId")
+                    if not media_id:
+                        debug_logger.log_warning("[UPSAMPLE] mediaId not found, skipping upsampling")
+                    else:
+                        # 调用高清化接口
+                        upsample_result = await self.flow_client.upsample_image(
+                            at=token.at,
+                            project_id=project_id,
+                            media_id=media_id
+                        )
+
+                        encoded_image = upsample_result.get("encodedImage")
+                        if encoded_image:
+                            # 保存 base64 到缓存文件
+                            cached_filename = self.file_cache.save_base64(encoded_image, "image")
+                            local_url = f"{self._get_base_url()}/tmp/{cached_filename}"
+                            if stream:
+                                yield self._create_stream_chunk("✅ 4K 高清化完成\n")
+
+                            # 直接返回高清化结果
+                            if stream:
+                                yield self._create_stream_chunk(
+                                    f"![Generated Image]({local_url})",
+                                    finish_reason="stop"
+                                )
+                            else:
+                                yield self._create_completion_response(
+                                    local_url,
+                                    media_type="image"
+                                )
+                            return
+                        else:
+                            debug_logger.log_warning("[UPSAMPLE] encodedImage not found in response")
+                            if stream:
+                                yield self._create_stream_chunk("⚠️ 高清化失败，返回原图\n")
+
+                except Exception as e:
+                    debug_logger.log_error(f"[UPSAMPLE] Failed: {str(e)}")
+                    if stream:
+                        yield self._create_stream_chunk(f"⚠️ 高清化失败: {str(e)}，返回原图\n")
+
+            # 缓存图片 (如果启用) - 非 GEM_PIX_2 或高清化失败时走这里
             local_url = image_url
             if config.cache_enabled:
                 try:

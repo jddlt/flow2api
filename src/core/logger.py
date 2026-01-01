@@ -63,7 +63,7 @@ class DebugLogger:
             result = {}
             for key, value in obj.items():
                 # 检查是否是 base64 相关字段
-                if key in ("rawImageBytes", "imageBytes", "base64", "data") and isinstance(value, str) and len(value) > max_length:
+                if key in ("rawImageBytes", "imageBytes", "base64", "data", "encodedImage") and isinstance(value, str) and len(value) > max_length:
                     result[key] = f"{value[:max_length]}... (truncated, total {len(value)} chars)"
                 else:
                     result[key] = self._truncate_base64(value, max_length)
