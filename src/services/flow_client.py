@@ -764,3 +764,52 @@ class FlowClient:
             except Exception as e:
                 debug_logger.log_error(f"[reCAPTCHA] error: {str(e)}")
                 return None
+
+    # ========== 图片高清化 ==========
+
+    async def upsample_image(
+        self,
+        at: str,
+        project_id: str,
+        media_id: str,
+        target_resolution: str = "UPSAMPLE_IMAGE_RESOLUTION_4K"
+    ) -> dict:
+        """图片高清化
+
+        Args:
+            at: Access Token
+            project_id: 项目ID
+            media_id: 原图的 mediaId
+            target_resolution: 目标分辨率 (默认 4K)
+
+        Returns:
+            {
+                "encodedImage": "base64..."
+            }
+        """
+        url = f"{self.api_base_url}/flow/upsampleImage"
+
+        # 获取 reCAPTCHA token
+        recaptcha_token = await self._get_recaptcha_token(project_id) or ""
+        session_id = self._generate_session_id()
+
+        json_data = {
+            "mediaId": media_id,
+            "targetResolution": target_resolution,
+            "clientContext": {
+                "recaptchaToken": recaptcha_token,
+                "sessionId": session_id,
+                "projectId": project_id,
+                "tool": "PINHOLE"
+            }
+        }
+
+        result = await self._make_request(
+            method="POST",
+            url=url,
+            json_data=json_data,
+            use_at=True,
+            at_token=at
+        )
+
+        return result

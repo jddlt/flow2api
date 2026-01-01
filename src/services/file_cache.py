@@ -268,6 +268,49 @@ class FileCache:
         """Get full path to cached file"""
         return self.cache_dir / filename
 
+    def save_base64(self, base64_data: str, media_type: str = "image") -> str:
+        """
+        Save base64 encoded data to cache file
+
+        Args:
+            base64_data: Base64 encoded image/video data
+            media_type: 'image' or 'video'
+
+        Returns:
+            Local cache filename
+        """
+        import base64
+        import uuid
+
+        # Generate unique filename
+        unique_id = uuid.uuid4().hex[:16]
+        if media_type == "video":
+            ext = ".mp4"
+        elif media_type == "image":
+            ext = ".jpg"
+        else:
+            ext = ""
+
+        filename = f"{unique_id}{ext}"
+        file_path = self.cache_dir / filename
+
+        try:
+            # Decode base64 and save to file
+            image_data = base64.b64decode(base64_data)
+            with open(file_path, 'wb') as f:
+                f.write(image_data)
+
+            debug_logger.log_info(f"Base64 cached: {filename} ({len(image_data)} bytes)")
+            return filename
+
+        except Exception as e:
+            debug_logger.log_error(
+                error_message=f"Failed to save base64 data: {str(e)}",
+                status_code=0,
+                response_text=str(e)
+            )
+            raise Exception(f"Failed to cache base64 data: {str(e)}")
+
     def set_timeout(self, timeout: int):
         """Set cache timeout in seconds"""
         self.default_timeout = timeout
