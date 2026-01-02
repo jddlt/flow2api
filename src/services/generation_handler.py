@@ -890,9 +890,17 @@ class GenerationHandler:
                         )
                     return
 
-                elif status.startswith("MEDIA_GENERATION_STATUS_ERROR"):
-                    # 失败
-                    yield self._create_error_response(f"视频生成失败: {status}")
+                elif status == "MEDIA_GENERATION_STATUS_FAILED" or status.startswith("MEDIA_GENERATION_STATUS_ERROR"):
+                    # 失败 - 尝试获取错误信息
+                    error_msg = "未知错误"
+                    operation_data = operation.get("operation", {})
+                    if "error" in operation_data:
+                        error_detail = operation_data["error"].get("message", "")
+                        if error_detail:
+                            # 截取关键错误信息
+                            error_msg = error_detail[:200] if len(error_detail) > 200 else error_detail
+                    debug_logger.log_error(f"[VIDEO] 生成失败: {status}, 错误: {error_msg}")
+                    yield self._create_error_response(f"视频生成失败: {error_msg}")
                     return
 
             except Exception as e:
