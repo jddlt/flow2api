@@ -491,19 +491,35 @@ class GenerationHandler:
             debug_logger.log_info(f"[GENERATION] model_config: {model_config}, model_name: {model_config.get('model_name')}")
             if model_config["model_name"] == "GEM_PIX_2":
                 try:
+                    # 根据会员等级选择分辨率
+                    if token.user_paygate_tier == "PAYGATE_TIER_TWO":
+                        target_resolution = "UPSAMPLE_IMAGE_RESOLUTION_4K"
+                        resolution_label = "4K"
+                    else:
+                        target_resolution = "UPSAMPLE_IMAGE_RESOLUTION_2K"
+                        resolution_label = "2K"
+
                     if stream:
-                        yield self._create_stream_chunk("正在进行 4K 高清化处理...\n")
+                        yield self._create_stream_chunk(f"正在进行 {resolution_label} 高清化处理...\n")
 
                     # 获取 mediaId (从 generatedImage.mediaGenerationId 字段)
                     media_id = image_data.get("mediaGenerationId")
                     if not media_id:
                         debug_logger.log_warning("[UPSAMPLE] mediaId not found, skipping upsampling")
                     else:
+                        # 根据会员等级选择分辨率
+                        if token.user_paygate_tier == "PAYGATE_TIER_TWO":
+                            target_resolution = "UPSAMPLE_IMAGE_RESOLUTION_4K"
+                        else:
+                            target_resolution = "UPSAMPLE_IMAGE_RESOLUTION_2K"
+                        debug_logger.log_info(f"[UPSAMPLE] 会员等级: {token.user_paygate_tier}, 目标分辨率: {target_resolution}")
+
                         # 调用高清化接口
                         upsample_result = await self.flow_client.upsample_image(
                             at=token.at,
                             project_id=project_id,
-                            media_id=media_id
+                            media_id=media_id,
+                            target_resolution=target_resolution
                         )
 
                         encoded_image = upsample_result.get("encodedImage")
@@ -512,7 +528,7 @@ class GenerationHandler:
                             cached_filename = self.file_cache.save_base64(encoded_image, "image")
                             local_url = f"{self._get_base_url()}/tmp/{cached_filename}"
                             if stream:
-                                yield self._create_stream_chunk("✅ 4K 高清化完成\n")
+                                yield self._create_stream_chunk(f"✅ {resolution_label} 高清化完成\n")
 
                             # 直接返回高清化结果
                             if stream:
