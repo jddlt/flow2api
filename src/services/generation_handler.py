@@ -469,11 +469,17 @@ class GenerationHandler:
             if stream:
                 yield self._create_stream_chunk("正在生成图片...\n")
 
+            # IMAGEN_3_5 模型：有图片时用 R2I，无图片时用 IMAGEN_3_5
+            actual_model_name = model_config["model_name"]
+            if model_config["model_name"] == "IMAGEN_3_5" and image_inputs:
+                actual_model_name = "R2I"
+                debug_logger.log_info(f"[GENERATION] IMAGEN_3_5 有参考图，切换为 R2I 模型")
+
             result = await self.flow_client.generate_image(
                 at=token.at,
                 project_id=project_id,
                 prompt=prompt,
-                model_name=model_config["model_name"],
+                model_name=actual_model_name,
                 aspect_ratio=model_config["aspect_ratio"],
                 image_inputs=image_inputs
             )
