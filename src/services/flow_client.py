@@ -103,11 +103,47 @@ class FlowClient:
                         duration_ms=duration_ms
                     )
 
-                response.raise_for_status()
+                if response.status_code >= 400:
+                    # HTTP 错误：提取响应体中的详细错误信息
+                    error_detail = ""
+                    try:
+                        error_json = response.json()
+                        # 尝试多种常见的错误格式
+                        if "error" in error_json:
+                            err = error_json["error"]
+                            if isinstance(err, dict):
+                                error_detail = err.get("message") or err.get("description") or str(err)
+                            else:
+                                error_detail = str(err)
+                        elif "message" in error_json:
+                            error_detail = error_json["message"]
+                        else:
+                            error_detail = response.text[:500]
+                    except Exception:
+                        error_detail = response.text[:500] if response.text else ""
+
+                    error_msg = f"HTTP Error {response.status_code}"
+                    if error_detail:
+                        error_msg += f": {error_detail}"
+
+                    if config.debug_enabled:
+                        debug_logger.log_error(
+                            error_message=error_msg,
+                            status_code=response.status_code,
+                            response_text=response.text
+                        )
+
+                    raise Exception(f"Flow API request failed: {error_msg}")
+
                 return response.json()
 
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000
+
+            # 如果已经是我们格式化过的异常，直接抛出
+            if "Flow API request failed:" in str(e):
+                raise
+
             error_msg = str(e)
 
             if config.debug_enabled:

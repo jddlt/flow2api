@@ -652,6 +652,16 @@ class GenerationHandler:
                         model_config = {**model_config, "model_key": "veo_3_1_i2v_s_fast_portrait_ultra_fl"}
                     debug_logger.log_info(f"[GENERATION] 高级会员升级模型: {original_model_key} -> {model_config['model_key']} (图片数: {image_count})")
 
+            # ===== 普通会员 I2V 模型：1张图时去掉 _fl 后缀 =====
+            else:
+                original_model_key = model_config["model_key"]
+                if video_type == "i2v" and image_count == 1:
+                    # 1张图时使用不带 _fl 的模型
+                    if original_model_key.endswith("_fl"):
+                        new_model_key = original_model_key[:-3]  # 去掉 _fl
+                        model_config = {**model_config, "model_key": new_model_key}
+                        debug_logger.log_info(f"[GENERATION] 单图模式切换模型: {original_model_key} -> {new_model_key}")
+
             # ========== 验证和处理图片 ==========
 
             # T2V: 文生视频 - 不支持图片
@@ -895,10 +905,21 @@ class GenerationHandler:
                     error_msg = "未知错误"
                     operation_data = operation.get("operation", {})
                     if "error" in operation_data:
-                        error_detail = operation_data["error"].get("message", "")
+                        error_obj = operation_data["error"]
+                        error_detail = error_obj.get("message", "")
+                        error_code = error_obj.get("code", "")
                         if error_detail:
-                            # 截取关键错误信息
-                            error_msg = error_detail[:200] if len(error_detail) > 200 else error_detail
+                            # 提取核心错误信息（去除冗长的堆栈跟踪）
+                            # 尝试从 message 中提取关键信息
+                            if "Error forwarded from" in error_detail:
+                                # 提取主要错误描述
+                                parts = error_detail.split(";")
+                                if parts:
+                                    error_msg = parts[0].strip()[:500]
+                            else:
+                                error_msg = error_detail[:500]
+                            if error_code:
+                                error_msg = f"[code={error_code}] {error_msg}"
                     debug_logger.log_error(f"[VIDEO] 生成失败: {status}, 错误: {error_msg}")
                     yield self._create_error_response(f"视频生成失败: {error_msg}")
                     return
