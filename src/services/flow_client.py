@@ -721,7 +721,7 @@ class FlowClient:
         return str(uuid.uuid4())
 
     async def _get_recaptcha_token(self, project_id: str) -> Optional[str]:
-        """获取reCAPTCHA token - 支持两种方式"""
+        """获取reCAPTCHA token - 每次都获取新token"""
         captcha_method = config.captcha_method
 
         # 恒定浏览器打码
