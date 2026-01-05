@@ -57,3 +57,4 @@ browser_data
 .venv/
 ven/
 *.json
+tmp/

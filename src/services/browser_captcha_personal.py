@@ -75,8 +75,6 @@ class BrowserCaptchaService:
                 'args': [
                     '--disable-blink-features=AutomationControlled',
                     '--disable-infobars',
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
                 ]
             }
 
