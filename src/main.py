@@ -50,6 +50,7 @@ async def lifespan(app: FastAPI):
         config.set_admin_username_from_db(admin_config.username)
         config.set_admin_password_from_db(admin_config.password)
         config.api_key = admin_config.api_key
+        config.premium_api_key = admin_config.premium_api_key
 
     # Load cache configuration from database
     cache_config = await db.get_cache_config()
