@@ -269,7 +269,8 @@ class GenerationHandler:
         model: str,
         prompt: str,
         images: Optional[List[bytes]] = None,
-        stream: bool = False
+        stream: bool = False,
+        api_key_type: Optional[str] = None
     ) -> AsyncGenerator:
         """统一生成入口
 
@@ -278,6 +279,7 @@ class GenerationHandler:
             prompt: 提示词
             images: 图片列表 (bytes格式)
             stream: 是否流式输出
+            api_key_type: API密钥类型 ('normal' 或 'premium')
         """
         start_time = time.time()
         token = None
@@ -324,12 +326,12 @@ class GenerationHandler:
         debug_logger.log_info(f"[GENERATION] 正在选择可用Token...")
 
         if generation_type == "image":
-            token = await self.load_balancer.select_token(for_image_generation=True, model=model)
+            token = await self.load_balancer.select_token(for_image_generation=True, model=model, api_key_type=api_key_type)
         else:
-            token = await self.load_balancer.select_token(for_video_generation=True, model=model)
+            token = await self.load_balancer.select_token(for_video_generation=True, model=model, api_key_type=api_key_type)
 
         if not token:
-            error_msg = self._get_no_token_error_message(generation_type)
+            error_msg = self._get_no_token_error_message(generation_type, api_key_type)
             debug_logger.log_error(f"[GENERATION] {error_msg}")
             if stream:
                 yield self._create_stream_chunk(f"❌ {error_msg}\n")
@@ -420,12 +422,18 @@ class GenerationHandler:
                 duration
             )
 
-    def _get_no_token_error_message(self, generation_type: str) -> str:
+    def _get_no_token_error_message(self, generation_type: str, api_key_type: Optional[str] = None) -> str:
         """获取无可用Token时的详细错误信息"""
+        from ..core.auth import API_KEY_TYPE_PREMIUM
+
+        premium_hint = ""
+        if api_key_type == API_KEY_TYPE_PREMIUM:
+            premium_hint = "（高级密钥仅可使用高级账户）"
+
         if generation_type == "image":
-            return "没有可用的Token进行图片生成。所有Token都处于禁用、冷却、锁定或已过期状态。"
+            return f"没有可用的Token进行图片生成。所有Token都处于禁用、冷却、锁定或已过期状态。{premium_hint}"
         else:
-            return "没有可用的Token进行视频生成。所有Token都处于禁用、冷却、配额耗尽或已过期状态。"
+            return f"没有可用的Token进行视频生成。所有Token都处于禁用、冷却、配额耗尽或已过期状态。{premium_hint}"
 
     async def _handle_image_generation(
         self,

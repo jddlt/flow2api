@@ -102,6 +102,16 @@ class Config:
         self._config["global"]["api_key"] = value
 
     @property
+    def premium_api_key(self) -> Optional[str]:
+        return self._config.get("global", {}).get("premium_api_key")
+
+    @premium_api_key.setter
+    def premium_api_key(self, value: Optional[str]):
+        if "global" not in self._config:
+            self._config["global"] = {}
+        self._config["global"]["premium_api_key"] = value
+
+    @property
     def admin_password(self) -> str:
         # If admin_password is set from database, use it; otherwise fall back to config file
         if self._admin_password is not None:

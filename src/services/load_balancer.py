@@ -2,8 +2,12 @@
 import random
 from typing import Optional
 from ..core.models import Token
+from ..core.auth import API_KEY_TYPE_PREMIUM
 from .concurrency_manager import ConcurrencyManager
 from ..core.logger import debug_logger
+
+# 高级账户的 paygate tier 标识（仅 PAYGATE_TIER_TWO）
+PREMIUM_PAYGATE_TIERS = ["PAYGATE_TIER_TWO"]
 
 
 class LoadBalancer:
@@ -17,7 +21,8 @@ class LoadBalancer:
         self,
         for_image_generation: bool = False,
         for_video_generation: bool = False,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        api_key_type: Optional[str] = None
     ) -> Optional[Token]:
         """
         Select a token using random load balancing
@@ -26,11 +31,14 @@ class LoadBalancer:
             for_image_generation: If True, only select tokens with image_enabled=True
             for_video_generation: If True, only select tokens with video_enabled=True
             model: Model name (used to filter tokens for specific models)
+            api_key_type: API key type ('normal' or 'premium')
+                         - 'normal': 可以使用所有账户
+                         - 'premium': 仅可使用高级账户 (user_paygate_tier 不为 PAYGATE_TIER_NOT_PAID)
 
         Returns:
             Selected token or None if no available tokens
         """
-        debug_logger.log_info(f"[LOAD_BALANCER] 开始选择Token (图片生成={for_image_generation}, 视频生成={for_video_generation}, 模型={model})")
+        debug_logger.log_info(f"[LOAD_BALANCER] 开始选择Token (图片生成={for_image_generation}, 视频生成={for_video_generation}, 模型={model}, 密钥类型={api_key_type})")
 
         active_tokens = await self.token_manager.get_active_tokens()
         debug_logger.log_info(f"[LOAD_BALANCER] 获取到 {len(active_tokens)} 个活跃Token")
@@ -48,6 +56,12 @@ class LoadBalancer:
             if not await self.token_manager.is_at_valid(token.id):
                 filtered_reasons[token.id] = "AT无效或已过期"
                 continue
+
+            # 如果是高级密钥，只允许使用高级账户
+            if api_key_type == API_KEY_TYPE_PREMIUM:
+                if token.user_paygate_tier not in PREMIUM_PAYGATE_TIERS:
+                    filtered_reasons[token.id] = "非高级账户(高级密钥仅可使用高级账户)"
+                    continue
 
             # Filter for image generation
             if for_image_generation:

@@ -60,8 +60,9 @@ async def retrieve_image_data(url: str) -> Optional[bytes]:
 
 
 @router.get("/v1/models")
-async def list_models(api_key: str = Depends(verify_api_key_header)):
+async def list_models(auth_info: tuple = Depends(verify_api_key_header)):
     """List available models"""
+    api_key, key_type = auth_info
     models = []
 
     for model_id, config in MODEL_CONFIG.items():
@@ -87,9 +88,10 @@ async def list_models(api_key: str = Depends(verify_api_key_header)):
 @router.post("/v1/chat/completions")
 async def create_chat_completion(
     request: ChatCompletionRequest,
-    api_key: str = Depends(verify_api_key_header)
+    auth_info: tuple = Depends(verify_api_key_header)
 ):
     """Create chat completion (unified endpoint for image and video generation)"""
+    api_key, key_type = auth_info
     try:
         # Extract prompt from messages
         if not request.messages:
@@ -168,7 +170,8 @@ async def create_chat_completion(
                     model=request.model,
                     prompt=prompt,
                     images=images if images else None,
-                    stream=True
+                    stream=True,
+                    api_key_type=key_type
                 ):
                     yield chunk
 
@@ -191,7 +194,8 @@ async def create_chat_completion(
                 model=request.model,
                 prompt=prompt,
                 images=images if images else None,
-                stream=False
+                stream=False,
+                api_key_type=key_type
             ):
                 result = chunk
 
