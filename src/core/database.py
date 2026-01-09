@@ -271,6 +271,12 @@ class Database:
                         print("  ✓ Added column 'error_ban_threshold' to admin_config table")
                     except Exception as e:
                         print(f"  ✗ Failed to add column 'error_ban_threshold': {e}")
+                if not await self._column_exists(db, "admin_config", "premium_api_key"):
+                    try:
+                        await db.execute("ALTER TABLE admin_config ADD COLUMN premium_api_key TEXT")
+                        print("  ✓ Added column 'premium_api_key' to admin_config table")
+                    except Exception as e:
+                        print(f"  ✗ Failed to add column 'premium_api_key': {e}")
 
             # Check and add missing columns to captcha_config table
             if await self._table_exists(db, "captcha_config"):
@@ -418,6 +424,7 @@ class Database:
                     username TEXT DEFAULT 'admin',
                     password TEXT DEFAULT 'admin',
                     api_key TEXT DEFAULT 'han1234',
+                    premium_api_key TEXT,
                     error_ban_threshold INTEGER DEFAULT 3,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
@@ -1034,6 +1041,7 @@ class Database:
             config.set_admin_username_from_db(admin_config.username)
             config.set_admin_password_from_db(admin_config.password)
             config.api_key = admin_config.api_key
+            config.premium_api_key = admin_config.premium_api_key
 
         # Reload cache config
         cache_config = await self.get_cache_config()

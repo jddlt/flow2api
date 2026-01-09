@@ -106,6 +106,7 @@ class AdminConfig(BaseModel):
     username: str
     password: str
     api_key: str
+    premium_api_key: Optional[str] = None  # 高级API密钥，仅能使用高级账户
     error_ban_threshold: int = 3  # Auto-disable token after N consecutive errors
 
 

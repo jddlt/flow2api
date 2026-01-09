@@ -157,6 +157,10 @@ class UpdateAPIKeyRequest(BaseModel):
     new_api_key: str
 
 
+class UpdatePremiumAPIKeyRequest(BaseModel):
+    new_premium_api_key: Optional[str] = None  # 可以为空，表示清除高级密钥
+
+
 class UpdateDebugConfigRequest(BaseModel):
     enabled: bool
 
@@ -740,6 +744,7 @@ async def get_admin_config(token: str = Depends(verify_admin_token)):
     return {
         "admin_username": admin_config.username,
         "api_key": admin_config.api_key,
+        "premium_api_key": admin_config.premium_api_key or "",
         "error_ban_threshold": admin_config.error_ban_threshold,
         "debug_enabled": config.debug_enabled  # Return actual debug status
     }
@@ -779,6 +784,27 @@ async def update_api_key(
     await db.reload_config_to_memory()
 
     return {"success": True, "message": "API Key更新成功"}
+
+
+@router.post("/api/admin/premium-apikey")
+async def update_premium_api_key(
+    request: UpdatePremiumAPIKeyRequest,
+    token: str = Depends(verify_admin_token)
+):
+    """Update premium API key (for premium accounts only)"""
+    # 如果传入空字符串，则清除高级密钥
+    new_key = request.new_premium_api_key.strip() if request.new_premium_api_key else None
+
+    # Update premium API key in database
+    await db.update_admin_config(premium_api_key=new_key)
+
+    # 🔥 Hot reload: sync database config to memory
+    await db.reload_config_to_memory()
+
+    if new_key:
+        return {"success": True, "message": "高级API Key更新成功"}
+    else:
+        return {"success": True, "message": "高级API Key已清除"}
 
 
 @router.post("/api/admin/debug")
