@@ -660,15 +660,14 @@ class GenerationHandler:
                         model_config = {**model_config, "model_key": "veo_3_1_i2v_s_fast_portrait_ultra_fl"}
                     debug_logger.log_info(f"[GENERATION] 高级会员升级模型: {original_model_key} -> {model_config['model_key']} (图片数: {image_count})")
 
-            # ===== 普通会员 I2V 模型：1张图时去掉 _fl 后缀 =====
-            else:
-                original_model_key = model_config["model_key"]
-                if video_type == "i2v" and image_count == 1:
-                    # 1张图时使用不带 _fl 的模型
-                    if original_model_key.endswith("_fl"):
-                        new_model_key = original_model_key[:-3]  # 去掉 _fl
-                        model_config = {**model_config, "model_key": new_model_key}
-                        debug_logger.log_info(f"[GENERATION] 单图模式切换模型: {original_model_key} -> {new_model_key}")
+            # ===== 所有用户 I2V 模型：1张图时去掉 _fl 后缀 =====
+            # 注意：这个逻辑必须在高级会员升级之后执行，对所有用户生效
+            if video_type == "i2v" and image_count == 1:
+                current_model_key = model_config["model_key"]
+                if current_model_key.endswith("_fl"):
+                    new_model_key = current_model_key[:-3]  # 去掉 _fl
+                    model_config = {**model_config, "model_key": new_model_key}
+                    debug_logger.log_info(f"[GENERATION] 单图模式切换模型: {current_model_key} -> {new_model_key}")
 
             # ========== 验证和处理图片 ==========
 
