@@ -1,10 +1,12 @@
 """Flow API Client for VideoFX (Veo)"""
+import io
 import time
 import uuid
 import random
 import base64
 from typing import Dict, Any, Optional, List
 from curl_cffi.requests import AsyncSession
+from PIL import Image
 from ..core.logger import debug_logger
 from ..core.config import config
 
@@ -280,8 +282,11 @@ class FlowClient:
         if aspect_ratio.startswith("VIDEO_"):
             aspect_ratio = aspect_ratio.replace("VIDEO_", "IMAGE_")
 
-        # 编码为base64 (去掉前缀)
-        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+        # 转换为JPEG格式（如果不是JPEG）
+        jpeg_bytes = self._ensure_jpeg(image_bytes)
+
+        # 编码为base64
+        image_base64 = base64.b64encode(jpeg_bytes).decode('utf-8')
 
         url = f"{self.api_base_url}:uploadUserImage"
         json_data = {
@@ -711,6 +716,21 @@ class FlowClient:
         )
 
     # ========== 辅助方法 ==========
+
+    def _ensure_jpeg(self, image_bytes: bytes) -> bytes:
+        """确保图片为JPEG格式，非JPEG则转换"""
+        # JPEG魔术字节: FF D8 FF
+        if image_bytes[:3] == b'\xff\xd8\xff':
+            return image_bytes
+
+        # 非JPEG，使用Pillow转换
+        img = Image.open(io.BytesIO(image_bytes))
+        # 如果有透明通道，转换为RGB
+        if img.mode in ('RGBA', 'LA', 'P'):
+            img = img.convert('RGB')
+        output = io.BytesIO()
+        img.save(output, format='JPEG', quality=95)
+        return output.getvalue()
 
     def _generate_session_id(self) -> str:
         """生成sessionId: ;timestamp"""
