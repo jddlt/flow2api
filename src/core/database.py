@@ -220,6 +220,8 @@ class Database:
                         page_action TEXT DEFAULT 'FLOW_GENERATION',
                         browser_proxy_enabled BOOLEAN DEFAULT 0,
                         browser_proxy_url TEXT,
+                        browser_use_cdp BOOLEAN DEFAULT 0,
+                        browser_cdp_endpoint TEXT,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
@@ -283,6 +285,8 @@ class Database:
                 captcha_columns_to_add = [
                     ("browser_proxy_enabled", "BOOLEAN DEFAULT 0"),
                     ("browser_proxy_url", "TEXT"),
+                    ("browser_use_cdp", "BOOLEAN DEFAULT 0"),
+                    ("browser_cdp_endpoint", "TEXT"),
                 ]
 
                 for col_name, col_type in captcha_columns_to_add:
@@ -486,6 +490,8 @@ class Database:
                     page_action TEXT DEFAULT 'FLOW_GENERATION',
                     browser_proxy_enabled BOOLEAN DEFAULT 0,
                     browser_proxy_url TEXT,
+                    browser_use_cdp BOOLEAN DEFAULT 0,
+                    browser_cdp_endpoint TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )

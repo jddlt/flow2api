@@ -353,14 +353,18 @@ class FlowClient:
         recaptcha_token = await self._get_recaptcha_token(project_id) or ""
         session_id = self._generate_session_id()
 
+        # 调试日志：检查 token 状态
+        if recaptcha_token:
+            debug_logger.log_info(f"[FlowClient] reCAPTCHA token 获取成功 (长度: {len(recaptcha_token)}, 前20字符: {recaptcha_token[:20]}...)")
+        else:
+            debug_logger.log_warning("[FlowClient] reCAPTCHA token 为空!")
+
+        # 构建 clientContext（新格式）
+        client_context = self._build_client_context(recaptcha_token, session_id, project_id)
+
         # 构建请求
         request_data = {
-            "clientContext": {
-                "recaptchaToken": recaptcha_token,
-                "projectId": project_id,
-                "sessionId": session_id,
-                "tool": "PINHOLE"
-            },
+            "clientContext": client_context,
             "seed": random.randint(1, 99999),
             "imageModelName": model_name,
             "imageAspectRatio": aspect_ratio,
@@ -369,10 +373,7 @@ class FlowClient:
         }
 
         json_data = {
-            "clientContext": {
-                "recaptchaToken": recaptcha_token,
-                "sessionId": session_id
-            },
+            "clientContext": client_context,
             "requests": [request_data]
         }
 
@@ -420,18 +421,15 @@ class FlowClient:
         url = f"{self.api_base_url}/video:batchAsyncGenerateVideoText"
 
         # 获取 reCAPTCHA token
-        recaptcha_token = await self._get_recaptcha_token(project_id) or ""
+        recaptcha_token = await self._get_recaptcha_token(project_id, "VIDEO_GENERATION") or ""
         session_id = self._generate_session_id()
         scene_id = str(uuid.uuid4())
 
+        # 构建 clientContext（新格式）
+        client_context = self._build_client_context(recaptcha_token, session_id, project_id, user_paygate_tier)
+
         json_data = {
-            "clientContext": {
-                "recaptchaToken": recaptcha_token,
-                "sessionId": session_id,
-                "projectId": project_id,
-                "tool": "PINHOLE",
-                "userPaygateTier": user_paygate_tier
-            },
+            "clientContext": client_context,
             "requests": [{
                 "aspectRatio": aspect_ratio,
                 "seed": random.randint(1, 99999),
@@ -482,18 +480,15 @@ class FlowClient:
         url = f"{self.api_base_url}/video:batchAsyncGenerateVideoReferenceImages"
 
         # 获取 reCAPTCHA token
-        recaptcha_token = await self._get_recaptcha_token(project_id) or ""
+        recaptcha_token = await self._get_recaptcha_token(project_id, "VIDEO_GENERATION") or ""
         session_id = self._generate_session_id()
         scene_id = str(uuid.uuid4())
 
+        # 构建 clientContext（新格式）
+        client_context = self._build_client_context(recaptcha_token, session_id, project_id, user_paygate_tier)
+
         json_data = {
-            "clientContext": {
-                "recaptchaToken": recaptcha_token,
-                "sessionId": session_id,
-                "projectId": project_id,
-                "tool": "PINHOLE",
-                "userPaygateTier": user_paygate_tier
-            },
+            "clientContext": client_context,
             "requests": [{
                 "aspectRatio": aspect_ratio,
                 "seed": random.randint(1, 99999),
@@ -547,18 +542,15 @@ class FlowClient:
         url = f"{self.api_base_url}/video:batchAsyncGenerateVideoStartAndEndImage"
 
         # 获取 reCAPTCHA token
-        recaptcha_token = await self._get_recaptcha_token(project_id) or ""
+        recaptcha_token = await self._get_recaptcha_token(project_id, "VIDEO_GENERATION") or ""
         session_id = self._generate_session_id()
         scene_id = str(uuid.uuid4())
 
+        # 构建 clientContext（新格式）
+        client_context = self._build_client_context(recaptcha_token, session_id, project_id, user_paygate_tier)
+
         json_data = {
-            "clientContext": {
-                "recaptchaToken": recaptcha_token,
-                "sessionId": session_id,
-                "projectId": project_id,
-                "tool": "PINHOLE",
-                "userPaygateTier": user_paygate_tier
-            },
+            "clientContext": client_context,
             "requests": [{
                 "aspectRatio": aspect_ratio,
                 "seed": random.randint(1, 99999),
@@ -616,18 +608,15 @@ class FlowClient:
         url = f"{self.api_base_url}/video:batchAsyncGenerateVideoStartImage"
 
         # 获取 reCAPTCHA token
-        recaptcha_token = await self._get_recaptcha_token(project_id) or ""
+        recaptcha_token = await self._get_recaptcha_token(project_id, "VIDEO_GENERATION") or ""
         session_id = self._generate_session_id()
         scene_id = str(uuid.uuid4())
 
+        # 构建 clientContext（新格式）
+        client_context = self._build_client_context(recaptcha_token, session_id, project_id, user_paygate_tier)
+
         json_data = {
-            "clientContext": {
-                "recaptchaToken": recaptcha_token,
-                "sessionId": session_id,
-                "projectId": project_id,
-                "tool": "PINHOLE",
-                "userPaygateTier": user_paygate_tier
-            },
+            "clientContext": client_context,
             "requests": [{
                 "aspectRatio": aspect_ratio,
                 "seed": random.randint(1, 99999),
@@ -740,21 +729,50 @@ class FlowClient:
         """生成sceneId: UUID"""
         return str(uuid.uuid4())
 
-    async def _get_recaptcha_token(self, project_id: str) -> Optional[str]:
-        """获取reCAPTCHA token - 每次都获取新token"""
+    def _build_client_context(
+        self,
+        recaptcha_token: str,
+        session_id: str,
+        project_id: str,
+        user_paygate_tier: str = None
+    ) -> dict:
+        """构建 clientContext 结构（新格式）
+
+        Args:
+            recaptcha_token: reCAPTCHA token
+            session_id: 会话ID
+            project_id: 项目ID
+            user_paygate_tier: 用户等级（可选，视频生成用）
+
+        Returns:
+            clientContext 字典
+        """
+        context = {
+            "recaptchaContext": {
+                "token": recaptcha_token,
+                "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB"
+            },
+            "sessionId": session_id,
+            "projectId": project_id,
+            "tool": "PINHOLE"
+        }
+
+        if user_paygate_tier:
+            context["userPaygateTier"] = user_paygate_tier
+
+        return context
+
+    async def _get_recaptcha_token(self, project_id: str, action: str = "IMAGE_GENERATION") -> Optional[str]:
+        """获取reCAPTCHA token - 每次都获取新token
+
+        Args:
+            project_id: 项目ID
+            action: 页面动作类型，IMAGE_GENERATION 或 VIDEO_GENERATION
+        """
         captcha_method = config.captcha_method
 
-        # 恒定浏览器打码
-        if captcha_method == "personal":
-            try:
-                from .browser_captcha_personal import BrowserCaptchaService
-                service = await BrowserCaptchaService.get_instance(self.proxy_manager)
-                return await service.get_token(project_id)
-            except Exception as e:
-                debug_logger.log_error(f"[reCAPTCHA Browser] error: {str(e)}")
-                return None
-        # 无头浏览器打码
-        elif captcha_method == "browser":
+        # 浏览器打码
+        if captcha_method == "browser":
             try:
                 from .browser_captcha import BrowserCaptchaService
                 service = await BrowserCaptchaService.get_instance(self.proxy_manager)
@@ -772,7 +790,7 @@ class FlowClient:
             website_key = "6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV"
             website_url = f"https://labs.google/fx/tools/flow/project/{project_id}"
             base_url = config.yescaptcha_base_url
-            page_action = "FLOW_GENERATION"
+            page_action = action
 
             try:
                 async with AsyncSession() as session:
@@ -849,15 +867,13 @@ class FlowClient:
         recaptcha_token = await self._get_recaptcha_token(project_id) or ""
         session_id = self._generate_session_id()
 
+        # 构建 clientContext（新格式）
+        client_context = self._build_client_context(recaptcha_token, session_id, project_id)
+
         json_data = {
             "mediaId": media_id,
             "targetResolution": target_resolution,
-            "clientContext": {
-                "recaptchaToken": recaptcha_token,
-                "sessionId": session_id,
-                "projectId": project_id,
-                "tool": "PINHOLE"
-            }
+            "clientContext": client_context
         }
 
         result = await self._make_request(

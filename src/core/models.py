@@ -152,9 +152,11 @@ class CaptchaConfig(BaseModel):
     yescaptcha_api_key: str = ""
     yescaptcha_base_url: str = "https://api.yescaptcha.com"
     website_key: str = "6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV"
-    page_action: str = "FLOW_GENERATION"
+    page_action: str = "IMAGE_GENERATION"
     browser_proxy_enabled: bool = False  # 浏览器打码是否启用代理
     browser_proxy_url: Optional[str] = None  # 浏览器打码代理URL
+    browser_use_cdp: bool = False  # 是否使用 CDP 连接模式（连接到已运行的 Chrome）
+    browser_cdp_endpoint: Optional[str] = None  # CDP 端点 URL (如: http://localhost:9222)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

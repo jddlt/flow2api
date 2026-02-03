@@ -7,6 +7,8 @@ import time
 import re
 import os
 import random
+import subprocess
+import socket
 from typing import Optional, Dict
 from playwright.async_api import async_playwright # type: ignore
 
@@ -85,6 +87,87 @@ def validate_browser_proxy_url(proxy_url: str) -> tuple[bool, str]:
     return False, f"不支持的代理协议：{protocol}"
 
 
+def check_port_open(host: str, port: int, timeout: float = 1.0) -> bool:
+    """检查端口是否开放
+
+    Args:
+        host: 主机地址
+        port: 端口号
+        timeout: 超时时间（秒）
+
+    Returns:
+        端口是否开放
+    """
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        result = sock.connect_ex((host, port))
+        sock.close()
+        return result == 0
+    except Exception:
+        return False
+
+
+async def wait_for_port(host: str, port: int, max_wait: float = 30.0) -> bool:
+    """等待端口就绪
+
+    Args:
+        host: 主机地址
+        port: 端口号
+        max_wait: 最大等待时间（秒）
+
+    Returns:
+        端口是否就绪
+    """
+    start_time = time.time()
+    while time.time() - start_time < max_wait:
+        if check_port_open(host, port):
+            return True
+        await asyncio.sleep(0.5)
+    return False
+
+
+def start_chrome_debug(port: int, user_data_dir: str) -> Optional[subprocess.Popen]:
+    """启动 Chrome 远程调试模式
+
+    Args:
+        port: 调试端口
+        user_data_dir: 用户数据目录
+
+    Returns:
+        Chrome 进程对象，如果启动失败返回 None
+    """
+    # macOS Chrome 路径
+    chrome_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+    # 检查 Chrome 是否存在
+    if not os.path.exists(chrome_path):
+        debug_logger.log_error(f"[BrowserCaptcha] Chrome 不存在: {chrome_path}")
+        return None
+
+    try:
+        # 确保用户数据目录存在
+        os.makedirs(user_data_dir, exist_ok=True)
+
+        # 启动 Chrome
+        process = subprocess.Popen(
+            [
+                chrome_path,
+                f"--remote-debugging-port={port}",
+                f"--user-data-dir={user_data_dir}",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True  # 脱离父进程，避免随父进程退出
+        )
+
+        debug_logger.log_info(f"[BrowserCaptcha] Chrome 进程已启动 (PID: {process.pid}, 端口: {port})")
+        return process
+    except Exception as e:
+        debug_logger.log_error(f"[BrowserCaptcha] 启动 Chrome 失败: {e}")
+        return None
+
+
 class BrowserCaptchaService:
     """浏览器自动化获取 reCAPTCHA token（单例模式）"""
 
@@ -96,7 +179,8 @@ class BrowserCaptchaService:
         """初始化服务"""
         self.headless = False  # 有头模式
         self.playwright = None
-        self.context = None  # 使用 persistent context
+        self.browser = None  # CDP 模式下使用
+        self.context = None  # 使用 persistent context 或 CDP context
         self._initialized = False
         self.website_key = "6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV"
         self.db = db
@@ -106,7 +190,14 @@ class BrowserCaptchaService:
         self.max_concurrent = 2
         # 请求间隔：避免过快请求
         self._last_request_time = 0
-        self.min_interval = 1.0  # 最小间隔1秒
+        self.min_interval = 5.0  # 最小间隔5秒（防止频率限制）
+        self.max_random_delay = 3.0  # 额外随机延迟0-3秒
+        # CDP 配置（从数据库读取后保存）
+        self.cdp_enabled = False
+        self.cdp_endpoint = None
+        self.cdp_port = None
+        self.cdp_user_data_dir = None
+        self.chrome_process = None  # Chrome 进程对象
 
     @classmethod
     async def get_instance(cls, db=None) -> 'BrowserCaptchaService':
@@ -120,58 +211,142 @@ class BrowserCaptchaService:
         return cls._instance
 
     async def initialize(self):
-        """初始化浏览器（启动一次）"""
+        """初始化浏览器（启动一次或连接CDP）"""
         if self._initialized:
             return
 
         try:
-            # 获取浏览器专用代理配置
+            # 获取浏览器专用配置
             proxy_url = None
+            use_cdp = False
+            cdp_endpoint = None
+
             if self.db:
                 captcha_config = await self.db.get_captcha_config()
+                # 代理配置
                 if captcha_config.browser_proxy_enabled and captcha_config.browser_proxy_url:
                     proxy_url = captcha_config.browser_proxy_url
+                # CDP 配置
+                use_cdp = captcha_config.browser_use_cdp
+                cdp_endpoint = captcha_config.browser_cdp_endpoint
 
-            debug_logger.log_info(f"[BrowserCaptcha] 正在启动浏览器... (proxy={proxy_url or 'None'})")
+                # 保存 CDP 配置（用于后续自动重启）
+                if use_cdp and cdp_endpoint:
+                    self.cdp_enabled = True
+                    self.cdp_endpoint = cdp_endpoint
+                    # 解析端点获取端口
+                    try:
+                        import re
+                        match = re.search(r':(\d+)/?$', cdp_endpoint)
+                        if match:
+                            self.cdp_port = int(match.group(1))
+                            # 设置用户数据目录
+                            self.cdp_user_data_dir = os.path.expanduser("~/chrome-for-captcha")
+                    except Exception as e:
+                        debug_logger.log_warning(f"[BrowserCaptcha] 解析 CDP 端口失败: {e}")
+
             self.playwright = await async_playwright().start()
 
-            # 配置浏览器启动参数 - 强化反检测
-            launch_options = {
-                'headless': self.headless,
-                'channel': 'chrome',  # 使用系统 Chrome
-                'args': [
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-dev-shm-usage',
-                    '--disable-infobars',
-                    '--disable-background-timer-throttling',
-                    '--disable-backgrounding-occluded-windows',
-                    '--disable-renderer-backgrounding',
-                    '--disable-features=IsolateOrigins,site-per-process',
-                    '--disable-web-security',
-                    '--disable-features=TranslateUI',
-                    '--lang=en-US',
-                ],
-                'ignore_default_args': ['--enable-automation'],  # 移除自动化标志
-            }
+            # CDP 连接模式：连接到已运行的 Chrome
+            if use_cdp and cdp_endpoint:
+                debug_logger.log_info(f"[BrowserCaptcha] 连接到 CDP 端点: {cdp_endpoint}")
 
-            # 如果有代理，解析并添加代理配置
-            if proxy_url:
-                proxy_config = parse_proxy_url(proxy_url)
-                if proxy_config:
-                    launch_options['proxy'] = proxy_config
-                    auth_info = "auth=yes" if 'username' in proxy_config else "auth=no"
-                    debug_logger.log_info(f"[BrowserCaptcha] 代理配置: {proxy_config['server']} ({auth_info})")
-                else:
-                    debug_logger.log_warning(f"[BrowserCaptcha] 代理URL格式错误: {proxy_url}")
+                # 尝试连接，如果失败则自动启动 Chrome
+                connected = False
+                for attempt in range(2):  # 最多尝试2次
+                    try:
+                        # 连接到远程调试端口的 Chrome
+                        self.browser = await self.playwright.chromium.connect_over_cdp(cdp_endpoint)
+                        # 获取默认的 browser context（用户真实的浏览器环境）
+                        contexts = self.browser.contexts
+                        if contexts:
+                            self.context = contexts[0]
+                            debug_logger.log_info(f"[BrowserCaptcha] ✅ 已连接到 CDP (已有 {len(contexts)} 个上下文)")
+                        else:
+                            # 没有现有 context，创建一个新的
+                            self.context = await self.browser.new_context()
+                            debug_logger.log_info("[BrowserCaptcha] ✅ 已连接到 CDP (创建新上下文)")
 
-            # 使用 persistent context 加载真实 Chrome profile
-            self.context = await self.playwright.chromium.launch_persistent_context(
-                self.user_data_dir,
-                **launch_options
-            )
+                        self._initialized = True
+                        connected = True
+                        return
+                    except Exception as e:
+                        debug_logger.log_warning(f"[BrowserCaptcha] CDP 连接失败 (尝试 {attempt+1}/2): {e}")
 
-            self._initialized = True
-            debug_logger.log_info(f"[BrowserCaptcha] ✅ 浏览器已启动 (profile={self.user_data_dir})")
+                        # 第一次失败：尝试自动启动 Chrome
+                        if attempt == 0 and self.cdp_port and self.cdp_user_data_dir:
+                            # 检查端口是否开放
+                            if not check_port_open("localhost", self.cdp_port, timeout=2.0):
+                                debug_logger.log_info(f"[BrowserCaptcha] 端口 {self.cdp_port} 未开放，正在启动 Chrome...")
+
+                                # 启动 Chrome
+                                self.chrome_process = start_chrome_debug(self.cdp_port, self.cdp_user_data_dir)
+
+                                if self.chrome_process:
+                                    # 等待端口就绪
+                                    debug_logger.log_info(f"[BrowserCaptcha] 等待 Chrome 启动...")
+                                    port_ready = await wait_for_port("localhost", self.cdp_port, max_wait=30.0)
+
+                                    if port_ready:
+                                        debug_logger.log_info(f"[BrowserCaptcha] Chrome 已就绪，重新连接...")
+                                        await asyncio.sleep(2)  # 额外等待2秒确保完全就绪
+                                        continue  # 重新尝试连接
+                                    else:
+                                        debug_logger.log_error("[BrowserCaptcha] Chrome 启动超时")
+                                else:
+                                    debug_logger.log_error("[BrowserCaptcha] Chrome 启动失败")
+                            else:
+                                debug_logger.log_warning(f"[BrowserCaptcha] 端口 {self.cdp_port} 已开放，但连接失败")
+
+                        # 第二次还是失败，放弃
+                        if attempt == 1:
+                            debug_logger.log_error(f"[BrowserCaptcha] CDP 连接失败，降级到普通启动模式")
+                            use_cdp = False
+                            break
+
+            # 普通模式：Playwright 启动浏览器（已不推荐，CDP 更可靠）
+            if not use_cdp:
+                debug_logger.log_warning("[BrowserCaptcha] ⚠️ 使用普通模式，reCAPTCHA 通过率可能较低，建议使用 CDP 模式")
+                debug_logger.log_info(f"[BrowserCaptcha] 正在启动浏览器... (proxy={proxy_url or 'None'})")
+
+                # 配置浏览器启动参数 - 强化反检测
+                launch_options = {
+                    'headless': self.headless,
+                    'channel': 'chrome',  # 使用系统 Chrome
+                    'args': [
+                        '--disable-blink-features=AutomationControlled',
+                        '--disable-dev-shm-usage',
+                        '--disable-infobars',
+                        '--disable-background-timer-throttling',
+                        '--disable-backgrounding-occluded-windows',
+                        '--disable-renderer-backgrounding',
+                        '--disable-features=IsolateOrigins,site-per-process',
+                        '--disable-web-security',
+                        '--disable-features=TranslateUI',
+                        '--lang=en-US',
+                    ],
+                    'ignore_default_args': ['--enable-automation'],  # 移除自动化标志
+                }
+
+                # 如果有代理，解析并添加代理配置
+                if proxy_url:
+                    proxy_config = parse_proxy_url(proxy_url)
+                    if proxy_config:
+                        launch_options['proxy'] = proxy_config
+                        auth_info = "auth=yes" if 'username' in proxy_config else "auth=no"
+                        debug_logger.log_info(f"[BrowserCaptcha] 代理配置: {proxy_config['server']} ({auth_info})")
+                    else:
+                        debug_logger.log_warning(f"[BrowserCaptcha] 代理URL格式错误: {proxy_url}")
+
+                # 使用 persistent context 加载真实 Chrome profile
+                self.context = await self.playwright.chromium.launch_persistent_context(
+                    self.user_data_dir,
+                    **launch_options
+                )
+                self.browser = None  # persistent context 模式不需要单独的 browser 对象
+
+                self._initialized = True
+                debug_logger.log_info(f"[BrowserCaptcha] ✅ 浏览器已启动 (profile={self.user_data_dir})")
         except Exception as e:
             debug_logger.log_error(f"[BrowserCaptcha] ❌ 浏览器启动失败: {str(e)}")
             raise
@@ -201,13 +376,19 @@ class BrowserCaptchaService:
 
         # 并发限制：获取信号量
         async with self._token_semaphore:
-            # 限流：确保请求间隔
+            # 限流：确保请求间隔 + 随机延迟（模拟人类行为）
             now = time.time()
             elapsed = now - self._last_request_time
             if elapsed < self.min_interval:
-                wait_time = self.min_interval - elapsed + random.uniform(0.1, 0.5)
-                debug_logger.log_info(f"[BrowserCaptcha] 限流等待 {wait_time:.2f}s...")
-                await asyncio.sleep(wait_time)
+                wait_time = self.min_interval - elapsed
+            else:
+                wait_time = 0
+            # 添加随机延迟（0-3秒）
+            random_delay = random.uniform(0, self.max_random_delay)
+            total_wait = wait_time + random_delay
+            if total_wait > 0:
+                debug_logger.log_info(f"[BrowserCaptcha] 限流等待 {total_wait:.2f}s (基础: {wait_time:.2f}s + 随机: {random_delay:.2f}s)...")
+                await asyncio.sleep(total_wait)
             self._last_request_time = time.time()
 
             start_time = time.time()
@@ -326,24 +507,30 @@ class BrowserCaptchaService:
                     debug_logger.log_warning(f"[BrowserCaptcha] 页面加载超时或失败: {str(e)}")
 
                 # 检查并注入 reCAPTCHA v3 脚本
-                debug_logger.log_info("[BrowserCaptcha] 检查并加载 reCAPTCHA v3 脚本...")
+                debug_logger.log_info("[BrowserCaptcha] 检查并加载 reCAPTCHA 脚本...")
                 script_loaded = await page.evaluate("""
                     () => {
-                        if (window.grecaptcha && typeof window.grecaptcha.execute === 'function') {
-                            return true;
+                        // 优先检查 Enterprise 版本
+                        if (window.grecaptcha && window.grecaptcha.enterprise &&
+                            typeof window.grecaptcha.enterprise.execute === 'function') {
+                            return 'enterprise';
                         }
-                        return false;
+                        // 检查普通 v3 版本
+                        if (window.grecaptcha && typeof window.grecaptcha.execute === 'function') {
+                            return 'v3';
+                        }
+                        return null;
                     }
                 """)
 
                 if not script_loaded:
-                    # 注入脚本
-                    debug_logger.log_info("[BrowserCaptcha] 注入 reCAPTCHA v3 脚本...")
+                    # 注入 Enterprise 版本脚本（Google Labs 已升级）
+                    debug_logger.log_info("[BrowserCaptcha] 注入 reCAPTCHA Enterprise 脚本...")
                     await page.evaluate(f"""
                         () => {{
                             return new Promise((resolve) => {{
                                 const script = document.createElement('script');
-                                script.src = 'https://www.google.com/recaptcha/api.js?render={self.website_key}';
+                                script.src = 'https://www.google.com/recaptcha/enterprise.js?render={self.website_key}';
                                 script.async = true;
                                 script.defer = true;
                                 script.onload = () => resolve(true);
@@ -352,48 +539,111 @@ class BrowserCaptchaService:
                             }});
                         }}
                     """)
+                else:
+                    debug_logger.log_info(f"[BrowserCaptcha] 页面已加载 reCAPTCHA ({script_loaded} 版本)")
 
                 # 等待reCAPTCHA加载和初始化
                 debug_logger.log_info("[BrowserCaptcha] 等待reCAPTCHA初始化...")
+                recaptcha_version = None
                 for i in range(20):
-                    grecaptcha_ready = await page.evaluate("""
+                    check_result = await page.evaluate("""
                         () => {
-                            return window.grecaptcha &&
-                                   typeof window.grecaptcha.execute === 'function';
+                            // 优先检查 Enterprise
+                            if (window.grecaptcha && window.grecaptcha.enterprise &&
+                                typeof window.grecaptcha.enterprise.execute === 'function') {
+                                return 'enterprise';
+                            }
+                            // 检查普通 v3
+                            if (window.grecaptcha && typeof window.grecaptcha.execute === 'function') {
+                                return 'v3';
+                            }
+                            return null;
                         }
                     """)
-                    if grecaptcha_ready:
-                        debug_logger.log_info(f"[BrowserCaptcha] reCAPTCHA 已准备好（等待了 {i*0.5} 秒）")
+                    if check_result:
+                        recaptcha_version = check_result
+                        debug_logger.log_info(f"[BrowserCaptcha] reCAPTCHA {recaptcha_version} 已准备好（等待了 {i*0.5} 秒）")
                         break
                     await asyncio.sleep(0.5)
                 else:
                     debug_logger.log_warning("[BrowserCaptcha] reCAPTCHA 初始化超时，继续尝试执行...")
+                    # 诊断：检查脚本加载情况
+                    diag = await page.evaluate("""
+                        () => {
+                            const scripts = Array.from(document.querySelectorAll('script'));
+                            const recaptchaScript = scripts.find(s => s.src && s.src.includes('recaptcha'));
+                            return {
+                                hasGrecaptcha: !!window.grecaptcha,
+                                hasEnterprise: !!(window.grecaptcha && window.grecaptcha.enterprise),
+                                hasEnterpriseExecute: !!(window.grecaptcha && window.grecaptcha.enterprise && window.grecaptcha.enterprise.execute),
+                                hasV3Execute: !!(window.grecaptcha && window.grecaptcha.execute),
+                                scriptLoaded: !!recaptchaScript,
+                                scriptSrc: recaptchaScript ? recaptchaScript.src : null
+                            };
+                        }
+                    """)
+                    debug_logger.log_error(f"[BrowserCaptcha] 诊断信息: {diag}")
 
                 # 额外等待确保完全初始化
                 await page.wait_for_timeout(1000)
 
                 # 执行reCAPTCHA并获取token
-                debug_logger.log_info("[BrowserCaptcha] 执行reCAPTCHA验证...")
+                debug_logger.log_info(f"[BrowserCaptcha] 执行reCAPTCHA验证（版本: {recaptcha_version or 'unknown'}）...")
                 token = await page.evaluate("""
-                    async (websiteKey) => {
+                    async (args) => {
                         try {
+                            const { websiteKey, version } = args;
+                            const action = 'IMAGE_GENERATION';
+
                             if (!window.grecaptcha) {
                                 console.error('[BrowserCaptcha] window.grecaptcha 不存在');
                                 return null;
                             }
 
+                            // 企业版
+                            if (version === 'enterprise' && window.grecaptcha.enterprise) {
+                                if (typeof window.grecaptcha.enterprise.execute !== 'function') {
+                                    console.error('[BrowserCaptcha] window.grecaptcha.enterprise.execute 不是函数');
+                                    return null;
+                                }
+
+                                // 确保 enterprise 已准备好
+                                await new Promise((resolve, reject) => {
+                                    const timeout = setTimeout(() => {
+                                        reject(new Error('reCAPTCHA Enterprise 加载超时'));
+                                    }, 15000);
+
+                                    if (window.grecaptcha.enterprise.ready) {
+                                        window.grecaptcha.enterprise.ready(() => {
+                                            clearTimeout(timeout);
+                                            resolve();
+                                        });
+                                    } else {
+                                        clearTimeout(timeout);
+                                        resolve();
+                                    }
+                                });
+
+                                // 执行 reCAPTCHA Enterprise
+                                const token = await window.grecaptcha.enterprise.execute(websiteKey, {
+                                    action: action
+                                });
+                                return token;
+                            }
+
+                            // 普通 v3 版本
                             if (typeof window.grecaptcha.execute !== 'function') {
                                 console.error('[BrowserCaptcha] window.grecaptcha.execute 不是函数');
                                 return null;
                             }
 
-                            // 确保grecaptcha已准备好
+                            // 确保 grecaptcha 已准备好
                             await new Promise((resolve, reject) => {
                                 const timeout = setTimeout(() => {
-                                    reject(new Error('reCAPTCHA加载超时'));
+                                    reject(new Error('reCAPTCHA v3 加载超时'));
                                 }, 15000);
 
-                                if (window.grecaptcha && window.grecaptcha.ready) {
+                                if (window.grecaptcha.ready) {
                                     window.grecaptcha.ready(() => {
                                         clearTimeout(timeout);
                                         resolve();
@@ -404,18 +654,17 @@ class BrowserCaptchaService:
                                 }
                             });
 
-                            // 执行reCAPTCHA v3
+                            // 执行 reCAPTCHA v3
                             const token = await window.grecaptcha.execute(websiteKey, {
-                                action: 'FLOW_GENERATION'
+                                action: action
                             });
-
                             return token;
                         } catch (error) {
                             console.error('[BrowserCaptcha] reCAPTCHA执行错误:', error);
                             return null;
                         }
                     }
-                """, self.website_key)
+                """, {"websiteKey": self.website_key, "version": recaptcha_version or 'v3'})
 
                 duration_ms = (time.time() - start_time) * 1000
 
@@ -438,9 +687,32 @@ class BrowserCaptchaService:
                         pass
 
     async def close(self):
-        """关闭浏览器"""
+        """关闭浏览器或断开CDP连接"""
         try:
-            if self.context:
+            # CDP 模式：断开连接
+            if self.browser:
+                try:
+                    await self.browser.close()
+                    debug_logger.log_info("[BrowserCaptcha] CDP 连接已断开")
+                except Exception as e:
+                    if "Connection closed" not in str(e):
+                        debug_logger.log_warning(f"[BrowserCaptcha] 断开CDP连接时出现异常: {str(e)}")
+                finally:
+                    self.browser = None
+                    self.context = None
+
+                # 如果是我们启动的 Chrome 进程，终止它
+                if self.chrome_process:
+                    try:
+                        self.chrome_process.terminate()
+                        debug_logger.log_info(f"[BrowserCaptcha] Chrome 进程已终止 (PID: {self.chrome_process.pid})")
+                    except Exception as e:
+                        debug_logger.log_warning(f"[BrowserCaptcha] 终止 Chrome 进程失败: {e}")
+                    finally:
+                        self.chrome_process = None
+
+            # 普通模式：关闭 persistent context
+            elif self.context:
                 try:
                     await self.context.close()
                 except Exception as e:
