@@ -127,12 +127,13 @@ async def wait_for_port(host: str, port: int, max_wait: float = 30.0) -> bool:
     return False
 
 
-def start_chrome_debug(port: int, user_data_dir: str) -> Optional[subprocess.Popen]:
+def start_chrome_debug(port: int, user_data_dir: str, proxy_url: str = None) -> Optional[subprocess.Popen]:
     """启动 Chrome 远程调试模式
 
     Args:
         port: 调试端口
         user_data_dir: 用户数据目录
+        proxy_url: 代理地址 (如: http://host:port 或 socks5://host:port)
 
     Returns:
         Chrome 进程对象，如果启动失败返回 None
@@ -149,13 +150,21 @@ def start_chrome_debug(port: int, user_data_dir: str) -> Optional[subprocess.Pop
         # 确保用户数据目录存在
         os.makedirs(user_data_dir, exist_ok=True)
 
+        # 构建启动参数
+        chrome_args = [
+            chrome_path,
+            f"--remote-debugging-port={port}",
+            f"--user-data-dir={user_data_dir}",
+        ]
+
+        # 添加代理参数
+        if proxy_url:
+            chrome_args.append(f"--proxy-server={proxy_url}")
+            debug_logger.log_info(f"[BrowserCaptcha] Chrome 代理: {proxy_url}")
+
         # 启动 Chrome
         process = subprocess.Popen(
-            [
-                chrome_path,
-                f"--remote-debugging-port={port}",
-                f"--user-data-dir={user_data_dir}",
-            ],
+            chrome_args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True  # 脱离父进程，避免随父进程退出
@@ -234,6 +243,7 @@ class BrowserCaptchaService:
                 if use_cdp and cdp_endpoint:
                     self.cdp_enabled = True
                     self.cdp_endpoint = cdp_endpoint
+                    self.cdp_proxy_url = proxy_url  # 保存代理配置
                     # 解析端点获取端口
                     try:
                         import re
@@ -279,8 +289,12 @@ class BrowserCaptchaService:
                             if not check_port_open("localhost", self.cdp_port, timeout=2.0):
                                 debug_logger.log_info(f"[BrowserCaptcha] 端口 {self.cdp_port} 未开放，正在启动 Chrome...")
 
-                                # 启动 Chrome
-                                self.chrome_process = start_chrome_debug(self.cdp_port, self.cdp_user_data_dir)
+                                # 启动 Chrome（带代理）
+                                self.chrome_process = start_chrome_debug(
+                                    self.cdp_port,
+                                    self.cdp_user_data_dir,
+                                    getattr(self, 'cdp_proxy_url', None)
+                                )
 
                                 if self.chrome_process:
                                     # 等待端口就绪
@@ -351,11 +365,12 @@ class BrowserCaptchaService:
             debug_logger.log_error(f"[BrowserCaptcha] ❌ 浏览器启动失败: {str(e)}")
             raise
 
-    async def get_token(self, project_id: str) -> Optional[str]:
-        """获取 reCAPTCHA token
+    async def get_token(self, project_id: str, action: str = "IMAGE_GENERATION") -> Optional[str]:
+        """获取 reCAPTCHA token（常驻页面模式）
 
         Args:
             project_id: Flow项目ID
+            action: reCAPTCHA action 类型
 
         Returns:
             reCAPTCHA token字符串，如果获取失败返回None
@@ -366,7 +381,6 @@ class BrowserCaptchaService:
 
         # 检查 context 是否还有效（用户可能手动关闭了浏览器）
         try:
-            # 尝试获取页面列表来检测 context 是否有效
             _ = self.context.pages
         except Exception:
             debug_logger.log_warning("[BrowserCaptcha] 浏览器已关闭，正在重新启动...")
@@ -392,8 +406,8 @@ class BrowserCaptchaService:
             self._last_request_time = time.time()
 
             start_time = time.time()
-            page = None
 
+            page = None
             try:
                 # 直接在 persistent context 中创建新标签页（复用登录状态）
                 page = await self.context.new_page()
@@ -403,268 +417,23 @@ class BrowserCaptchaService:
                     stealth = Stealth()
                     await stealth.apply_stealth_async(page)
 
-                # 注入额外的反检测脚本（包含 Canvas/WebGL 指纹伪装）
-                await page.add_init_script("""
-                    // 隐藏 webdriver 属性
-                    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                # 注入反检测脚本
+                await self._inject_stealth_scripts(page)
 
-                    // 修改 plugins 数量
-                    Object.defineProperty(navigator, 'plugins', {
-                        get: () => [1, 2, 3, 4, 5]
-                    });
-
-                    // 修改 languages
-                    Object.defineProperty(navigator, 'languages', {
-                        get: () => ['en-US', 'en']
-                    });
-
-                    // 隐藏自动化相关属性
-                    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
-                    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
-                    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
-
-                    // 伪造 chrome 对象
-                    window.chrome = {
-                        runtime: {},
-                        loadTimes: function() {},
-                        csi: function() {},
-                        app: {}
-                    };
-
-                    // 修改 permissions
-                    const originalQuery = window.navigator.permissions.query;
-                    window.navigator.permissions.query = (parameters) => (
-                        parameters.name === 'notifications' ?
-                            Promise.resolve({ state: Notification.permission }) :
-                            originalQuery(parameters)
-                    );
-
-                    // ===== Canvas 指纹伪装 =====
-                    const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
-                    HTMLCanvasElement.prototype.toDataURL = function(type) {
-                        if (type === 'image/png' || type === undefined) {
-                            const ctx = this.getContext('2d');
-                            if (ctx) {
-                                // 添加微小噪点
-                                const imageData = ctx.getImageData(0, 0, this.width, this.height);
-                                for (let i = 0; i < imageData.data.length; i += 4) {
-                                    imageData.data[i] ^= (Math.random() * 2) | 0;
-                                }
-                                ctx.putImageData(imageData, 0, 0);
-                            }
-                        }
-                        return originalToDataURL.apply(this, arguments);
-                    };
-
-                    // ===== WebGL 指纹伪装 =====
-                    const getParameterProxyHandler = {
-                        apply: function(target, thisArg, args) {
-                            const param = args[0];
-                            const gl = thisArg;
-                            // 修改渲染器和供应商信息
-                            if (param === 37445) { // UNMASKED_VENDOR_WEBGL
-                                return 'Google Inc. (Intel)';
-                            }
-                            if (param === 37446) { // UNMASKED_RENDERER_WEBGL
-                                return 'ANGLE (Intel, Intel(R) UHD Graphics 630, OpenGL 4.1)';
-                            }
-                            return Reflect.apply(target, thisArg, args);
-                        }
-                    };
-
-                    // 劫持 WebGL getParameter
-                    const originalGetParameter = WebGLRenderingContext.prototype.getParameter;
-                    WebGLRenderingContext.prototype.getParameter = new Proxy(originalGetParameter, getParameterProxyHandler);
-
-                    if (typeof WebGL2RenderingContext !== 'undefined') {
-                        const originalGetParameter2 = WebGL2RenderingContext.prototype.getParameter;
-                        WebGL2RenderingContext.prototype.getParameter = new Proxy(originalGetParameter2, getParameterProxyHandler);
-                    }
-
-                    // ===== AudioContext 指纹伪装 =====
-                    const originalCreateAnalyser = AudioContext.prototype.createAnalyser;
-                    AudioContext.prototype.createAnalyser = function() {
-                        const analyser = originalCreateAnalyser.apply(this, arguments);
-                        const originalGetFloatFrequencyData = analyser.getFloatFrequencyData.bind(analyser);
-                        analyser.getFloatFrequencyData = function(array) {
-                            originalGetFloatFrequencyData(array);
-                            for (let i = 0; i < array.length; i++) {
-                                array[i] += Math.random() * 0.0001;
-                            }
-                        };
-                        return analyser;
-                    };
-                """)
-
+                # 导航到目标页面
                 website_url = f"https://labs.google/fx/tools/flow/project/{project_id}"
+                debug_logger.log_info(f"[BrowserCaptcha] 导航到: {website_url}")
 
-                debug_logger.log_info(f"[BrowserCaptcha] 访问页面: {website_url}")
-
-                # 访问页面
                 try:
                     await page.goto(website_url, wait_until="domcontentloaded", timeout=30000)
                 except Exception as e:
                     debug_logger.log_warning(f"[BrowserCaptcha] 页面加载超时或失败: {str(e)}")
 
-                # 检查并注入 reCAPTCHA v3 脚本
-                debug_logger.log_info("[BrowserCaptcha] 检查并加载 reCAPTCHA 脚本...")
-                script_loaded = await page.evaluate("""
-                    () => {
-                        // 优先检查 Enterprise 版本
-                        if (window.grecaptcha && window.grecaptcha.enterprise &&
-                            typeof window.grecaptcha.enterprise.execute === 'function') {
-                            return 'enterprise';
-                        }
-                        // 检查普通 v3 版本
-                        if (window.grecaptcha && typeof window.grecaptcha.execute === 'function') {
-                            return 'v3';
-                        }
-                        return null;
-                    }
-                """)
+                # 等待 reCAPTCHA 初始化
+                await self._ensure_recaptcha_ready(page)
 
-                if not script_loaded:
-                    # 注入 Enterprise 版本脚本（Google Labs 已升级）
-                    debug_logger.log_info("[BrowserCaptcha] 注入 reCAPTCHA Enterprise 脚本...")
-                    await page.evaluate(f"""
-                        () => {{
-                            return new Promise((resolve) => {{
-                                const script = document.createElement('script');
-                                script.src = 'https://www.google.com/recaptcha/enterprise.js?render={self.website_key}';
-                                script.async = true;
-                                script.defer = true;
-                                script.onload = () => resolve(true);
-                                script.onerror = () => resolve(false);
-                                document.head.appendChild(script);
-                            }});
-                        }}
-                    """)
-                else:
-                    debug_logger.log_info(f"[BrowserCaptcha] 页面已加载 reCAPTCHA ({script_loaded} 版本)")
-
-                # 等待reCAPTCHA加载和初始化
-                debug_logger.log_info("[BrowserCaptcha] 等待reCAPTCHA初始化...")
-                recaptcha_version = None
-                for i in range(20):
-                    check_result = await page.evaluate("""
-                        () => {
-                            // 优先检查 Enterprise
-                            if (window.grecaptcha && window.grecaptcha.enterprise &&
-                                typeof window.grecaptcha.enterprise.execute === 'function') {
-                                return 'enterprise';
-                            }
-                            // 检查普通 v3
-                            if (window.grecaptcha && typeof window.grecaptcha.execute === 'function') {
-                                return 'v3';
-                            }
-                            return null;
-                        }
-                    """)
-                    if check_result:
-                        recaptcha_version = check_result
-                        debug_logger.log_info(f"[BrowserCaptcha] reCAPTCHA {recaptcha_version} 已准备好（等待了 {i*0.5} 秒）")
-                        break
-                    await asyncio.sleep(0.5)
-                else:
-                    debug_logger.log_warning("[BrowserCaptcha] reCAPTCHA 初始化超时，继续尝试执行...")
-                    # 诊断：检查脚本加载情况
-                    diag = await page.evaluate("""
-                        () => {
-                            const scripts = Array.from(document.querySelectorAll('script'));
-                            const recaptchaScript = scripts.find(s => s.src && s.src.includes('recaptcha'));
-                            return {
-                                hasGrecaptcha: !!window.grecaptcha,
-                                hasEnterprise: !!(window.grecaptcha && window.grecaptcha.enterprise),
-                                hasEnterpriseExecute: !!(window.grecaptcha && window.grecaptcha.enterprise && window.grecaptcha.enterprise.execute),
-                                hasV3Execute: !!(window.grecaptcha && window.grecaptcha.execute),
-                                scriptLoaded: !!recaptchaScript,
-                                scriptSrc: recaptchaScript ? recaptchaScript.src : null
-                            };
-                        }
-                    """)
-                    debug_logger.log_error(f"[BrowserCaptcha] 诊断信息: {diag}")
-
-                # 额外等待确保完全初始化
-                await page.wait_for_timeout(1000)
-
-                # 执行reCAPTCHA并获取token
-                debug_logger.log_info(f"[BrowserCaptcha] 执行reCAPTCHA验证（版本: {recaptcha_version or 'unknown'}）...")
-                token = await page.evaluate("""
-                    async (args) => {
-                        try {
-                            const { websiteKey, version } = args;
-                            const action = 'IMAGE_GENERATION';
-
-                            if (!window.grecaptcha) {
-                                console.error('[BrowserCaptcha] window.grecaptcha 不存在');
-                                return null;
-                            }
-
-                            // 企业版
-                            if (version === 'enterprise' && window.grecaptcha.enterprise) {
-                                if (typeof window.grecaptcha.enterprise.execute !== 'function') {
-                                    console.error('[BrowserCaptcha] window.grecaptcha.enterprise.execute 不是函数');
-                                    return null;
-                                }
-
-                                // 确保 enterprise 已准备好
-                                await new Promise((resolve, reject) => {
-                                    const timeout = setTimeout(() => {
-                                        reject(new Error('reCAPTCHA Enterprise 加载超时'));
-                                    }, 15000);
-
-                                    if (window.grecaptcha.enterprise.ready) {
-                                        window.grecaptcha.enterprise.ready(() => {
-                                            clearTimeout(timeout);
-                                            resolve();
-                                        });
-                                    } else {
-                                        clearTimeout(timeout);
-                                        resolve();
-                                    }
-                                });
-
-                                // 执行 reCAPTCHA Enterprise
-                                const token = await window.grecaptcha.enterprise.execute(websiteKey, {
-                                    action: action
-                                });
-                                return token;
-                            }
-
-                            // 普通 v3 版本
-                            if (typeof window.grecaptcha.execute !== 'function') {
-                                console.error('[BrowserCaptcha] window.grecaptcha.execute 不是函数');
-                                return null;
-                            }
-
-                            // 确保 grecaptcha 已准备好
-                            await new Promise((resolve, reject) => {
-                                const timeout = setTimeout(() => {
-                                    reject(new Error('reCAPTCHA v3 加载超时'));
-                                }, 15000);
-
-                                if (window.grecaptcha.ready) {
-                                    window.grecaptcha.ready(() => {
-                                        clearTimeout(timeout);
-                                        resolve();
-                                    });
-                                } else {
-                                    clearTimeout(timeout);
-                                    resolve();
-                                }
-                            });
-
-                            // 执行 reCAPTCHA v3
-                            const token = await window.grecaptcha.execute(websiteKey, {
-                                action: action
-                            });
-                            return token;
-                        } catch (error) {
-                            console.error('[BrowserCaptcha] reCAPTCHA执行错误:', error);
-                            return null;
-                        }
-                    }
-                """, {"websiteKey": self.website_key, "version": recaptcha_version or 'v3'})
+                # 执行 reCAPTCHA 获取 token
+                token = await self._execute_recaptcha(page, action)
 
                 duration_ms = (time.time() - start_time) * 1000
 
@@ -679,12 +448,215 @@ class BrowserCaptchaService:
                 debug_logger.log_error(f"[BrowserCaptcha] 获取token异常: {str(e)}")
                 return None
             finally:
-                # 关闭标签页（释放资源，支持并发）
+                # 关闭标签页（释放资源）
                 if page:
                     try:
                         await page.close()
-                    except:
+                    except Exception:
                         pass
+
+    async def _inject_stealth_scripts(self, page):
+        """注入反检测脚本"""
+        await page.add_init_script("""
+            // 隐藏 webdriver 属性
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+
+            // 修改 plugins 数量
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [1, 2, 3, 4, 5]
+            });
+
+            // 修改 languages
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ['en-US', 'en']
+            });
+
+            // 隐藏自动化相关属性
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+
+            // 伪造 chrome 对象
+            window.chrome = {
+                runtime: {},
+                loadTimes: function() {},
+                csi: function() {},
+                app: {}
+            };
+
+            // 修改 permissions
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (parameters) => (
+                parameters.name === 'notifications' ?
+                    Promise.resolve({ state: Notification.permission }) :
+                    originalQuery(parameters)
+            );
+
+            // ===== Canvas 指纹伪装 =====
+            const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+            HTMLCanvasElement.prototype.toDataURL = function(type) {
+                if (type === 'image/png' || type === undefined) {
+                    const ctx = this.getContext('2d');
+                    if (ctx) {
+                        const imageData = ctx.getImageData(0, 0, this.width, this.height);
+                        for (let i = 0; i < imageData.data.length; i += 4) {
+                            imageData.data[i] ^= (Math.random() * 2) | 0;
+                        }
+                        ctx.putImageData(imageData, 0, 0);
+                    }
+                }
+                return originalToDataURL.apply(this, arguments);
+            };
+
+            // ===== WebGL 指纹伪装 =====
+            const getParameterProxyHandler = {
+                apply: function(target, thisArg, args) {
+                    const param = args[0];
+                    if (param === 37445) return 'Google Inc. (Intel)';
+                    if (param === 37446) return 'ANGLE (Intel, Intel(R) UHD Graphics 630, OpenGL 4.1)';
+                    return Reflect.apply(target, thisArg, args);
+                }
+            };
+
+            const originalGetParameter = WebGLRenderingContext.prototype.getParameter;
+            WebGLRenderingContext.prototype.getParameter = new Proxy(originalGetParameter, getParameterProxyHandler);
+
+            if (typeof WebGL2RenderingContext !== 'undefined') {
+                const originalGetParameter2 = WebGL2RenderingContext.prototype.getParameter;
+                WebGL2RenderingContext.prototype.getParameter = new Proxy(originalGetParameter2, getParameterProxyHandler);
+            }
+
+            // ===== AudioContext 指纹伪装 =====
+            const originalCreateAnalyser = AudioContext.prototype.createAnalyser;
+            AudioContext.prototype.createAnalyser = function() {
+                const analyser = originalCreateAnalyser.apply(this, arguments);
+                const originalGetFloatFrequencyData = analyser.getFloatFrequencyData.bind(analyser);
+                analyser.getFloatFrequencyData = function(array) {
+                    originalGetFloatFrequencyData(array);
+                    for (let i = 0; i < array.length; i++) {
+                        array[i] += Math.random() * 0.0001;
+                    }
+                };
+                return analyser;
+            };
+        """)
+
+    async def _ensure_recaptcha_ready(self, page):
+        """确保 reCAPTCHA 已加载并初始化"""
+        # 检查并注入 reCAPTCHA 脚本
+        script_loaded = await page.evaluate("""
+            () => {
+                if (window.grecaptcha && window.grecaptcha.enterprise &&
+                    typeof window.grecaptcha.enterprise.execute === 'function') {
+                    return 'enterprise';
+                }
+                if (window.grecaptcha && typeof window.grecaptcha.execute === 'function') {
+                    return 'v3';
+                }
+                return null;
+            }
+        """)
+
+        if not script_loaded:
+            debug_logger.log_info("[BrowserCaptcha] 注入 reCAPTCHA Enterprise 脚本...")
+            await page.evaluate(f"""
+                () => {{
+                    return new Promise((resolve) => {{
+                        const script = document.createElement('script');
+                        script.src = 'https://www.google.com/recaptcha/enterprise.js?render={self.website_key}';
+                        script.async = true;
+                        script.defer = true;
+                        script.onload = () => resolve(true);
+                        script.onerror = () => resolve(false);
+                        document.head.appendChild(script);
+                    }});
+                }}
+            """)
+
+        # 等待 reCAPTCHA 初始化
+        debug_logger.log_info("[BrowserCaptcha] 等待 reCAPTCHA 初始化...")
+        for i in range(20):
+            check_result = await page.evaluate("""
+                () => {
+                    if (window.grecaptcha && window.grecaptcha.enterprise &&
+                        typeof window.grecaptcha.enterprise.execute === 'function') {
+                        return 'enterprise';
+                    }
+                    if (window.grecaptcha && typeof window.grecaptcha.execute === 'function') {
+                        return 'v3';
+                    }
+                    return null;
+                }
+            """)
+            if check_result:
+                debug_logger.log_info(f"[BrowserCaptcha] reCAPTCHA {check_result} 已就绪（等待了 {i*0.5}s）")
+                break
+            await asyncio.sleep(0.5)
+
+        # 额外等待确保完全初始化
+        await page.wait_for_timeout(1000)
+
+    async def _execute_recaptcha(self, page, action: str) -> Optional[str]:
+        """执行 reCAPTCHA 获取 token"""
+        debug_logger.log_info(f"[BrowserCaptcha] 执行 reCAPTCHA（action: {action}）...")
+
+        token = await page.evaluate("""
+            async (args) => {
+                try {
+                    const { websiteKey, action } = args;
+
+                    if (!window.grecaptcha) {
+                        console.error('[BrowserCaptcha] window.grecaptcha 不存在');
+                        return null;
+                    }
+
+                    // 企业版
+                    if (window.grecaptcha.enterprise && typeof window.grecaptcha.enterprise.execute === 'function') {
+                        await new Promise((resolve, reject) => {
+                            const timeout = setTimeout(() => reject(new Error('timeout')), 15000);
+                            if (window.grecaptcha.enterprise.ready) {
+                                window.grecaptcha.enterprise.ready(() => {
+                                    clearTimeout(timeout);
+                                    resolve();
+                                });
+                            } else {
+                                clearTimeout(timeout);
+                                resolve();
+                            }
+                        });
+
+                        const token = await window.grecaptcha.enterprise.execute(websiteKey, { action: action });
+                        return token;
+                    }
+
+                    // 普通 v3
+                    if (typeof window.grecaptcha.execute === 'function') {
+                        await new Promise((resolve, reject) => {
+                            const timeout = setTimeout(() => reject(new Error('timeout')), 15000);
+                            if (window.grecaptcha.ready) {
+                                window.grecaptcha.ready(() => {
+                                    clearTimeout(timeout);
+                                    resolve();
+                                });
+                            } else {
+                                clearTimeout(timeout);
+                                resolve();
+                            }
+                        });
+
+                        const token = await window.grecaptcha.execute(websiteKey, { action: action });
+                        return token;
+                    }
+
+                    return null;
+                } catch (e) {
+                    console.error('[BrowserCaptcha] execute error:', e);
+                    return null;
+                }
+            }
+        """, {"websiteKey": self.website_key, "action": action})
+
+        return token
 
     async def close(self):
         """关闭浏览器或断开CDP连接"""
