@@ -195,12 +195,12 @@ class BrowserCaptchaService:
         self.db = db
         # 使用固定目录保存浏览器状态
         self.user_data_dir = os.path.join(os.getcwd(), "browser_data")
-        # 并发限制：同时最多2个打码请求
-        self.max_concurrent = 2
+        # 并发限制：同时最多1个打码请求（避免同时打码导致失败）
+        self.max_concurrent = 1
         # 请求间隔：避免过快请求
         self._last_request_time = 0
-        self.min_interval = 5.0  # 最小间隔5秒（防止频率限制）
-        self.max_random_delay = 3.0  # 额外随机延迟0-3秒
+        self.min_interval = 2.0  # 最小间隔2秒（防止频率限制）
+        self.max_random_delay = 0  # 不需要额外随机延迟
         # CDP 配置（从数据库读取后保存）
         self.cdp_enabled = False
         self.cdp_endpoint = None
