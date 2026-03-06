@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from curl_cffi.requests import AsyncSession
 from ..core.auth import verify_api_key_header
 from ..core.models import ChatCompletionRequest
-from ..services.generation_handler import GenerationHandler, MODEL_CONFIG
+from ..services.generation_handler import GenerationHandler, MODEL_CONFIG, get_model_config
 from ..core.logger import debug_logger
 
 router = APIRouter()
@@ -133,7 +133,7 @@ async def create_chat_completion(
                     images.append(image_bytes)
 
         # 自动参考图：仅对图片模型生效
-        model_config = MODEL_CONFIG.get(request.model)
+        model_config = get_model_config(request.model)
 
         if model_config and model_config["type"] == "image" and not images and len(request.messages) > 1:
             debug_logger.log_info(f"[CONTEXT] 开始查找历史参考图，消息数量: {len(request.messages)}")

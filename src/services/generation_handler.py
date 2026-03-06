@@ -12,15 +12,15 @@ from .file_cache import FileCache
 
 # Model configuration
 MODEL_CONFIG = {
-    # 图片生成 - GEM_PIX (Gemini 2.5 Flash)
-    "gemini-2.5-flash-image-landscape": {
+    # 图片生成 - NARWHAL (Nano Banana 2 / Gemini 3.1 Flash Image)
+    "gemini-3.1-flash-image-landscape": {
         "type": "image",
-        "model_name": "GEM_PIX",
+        "model_name": "NARWHAL",
         "aspect_ratio": "IMAGE_ASPECT_RATIO_LANDSCAPE"
     },
-    "gemini-2.5-flash-image-portrait": {
+    "gemini-3.1-flash-image-portrait": {
         "type": "image",
-        "model_name": "GEM_PIX",
+        "model_name": "NARWHAL",
         "aspect_ratio": "IMAGE_ASPECT_RATIO_PORTRAIT"
     },
 
@@ -233,6 +233,23 @@ MODEL_CONFIG = {
 }
 
 
+# Backward-compatible aliases for renamed models
+MODEL_ALIASES = {
+    "gemini-2.5-flash-image-landscape": "gemini-3.1-flash-image-landscape",
+    "gemini-2.5-flash-image-portrait": "gemini-3.1-flash-image-portrait",
+}
+
+
+def resolve_model_id(model_id: str) -> str:
+    """Resolve backward-compatible aliases to canonical model ids."""
+    return MODEL_ALIASES.get(model_id, model_id)
+
+
+def get_model_config(model_id: str) -> Optional[Dict[str, Any]]:
+    """Get model config for a model id or alias."""
+    return MODEL_CONFIG.get(resolve_model_id(model_id))
+
+
 class GenerationHandler:
     """统一生成处理器"""
 
@@ -285,15 +302,19 @@ class GenerationHandler:
         token = None
 
         # 1. 验证模型
-        if model not in MODEL_CONFIG:
+        resolved_model = resolve_model_id(model)
+
+        if resolved_model not in MODEL_CONFIG:
             error_msg = f"不支持的模型: {model}"
             debug_logger.log_error(error_msg)
             yield self._create_error_response(error_msg)
             return
 
-        model_config = MODEL_CONFIG[model]
+        model_config = MODEL_CONFIG[resolved_model]
         generation_type = model_config["type"]
-        debug_logger.log_info(f"[GENERATION] 开始生成 - 模型: {model}, 类型: {generation_type}, Prompt: {prompt[:50]}...")
+        debug_logger.log_info(
+            f"[GENERATION] 开始生成 - 模型: {model}, 解析后模型: {resolved_model}, 类型: {generation_type}, Prompt: {prompt[:50]}..."
+        )
 
         # 非流式模式: 只检查可用性
         if not stream:
@@ -326,9 +347,17 @@ class GenerationHandler:
         debug_logger.log_info(f"[GENERATION] 正在选择可用Token...")
 
         if generation_type == "image":
-            token = await self.load_balancer.select_token(for_image_generation=True, model=model, api_key_type=api_key_type)
+            token = await self.load_balancer.select_token(
+                for_image_generation=True,
+                model=resolved_model,
+                api_key_type=api_key_type
+            )
         else:
-            token = await self.load_balancer.select_token(for_video_generation=True, model=model, api_key_type=api_key_type)
+            token = await self.load_balancer.select_token(
+                for_video_generation=True,
+                model=resolved_model,
+                api_key_type=api_key_type
+            )
 
         if not token:
             error_msg = self._get_no_token_error_message(generation_type, api_key_type)
@@ -391,7 +420,12 @@ class GenerationHandler:
             await self._log_request(
                 token.id,
                 f"generate_{generation_type}",
-                {"model": model, "prompt": prompt[:100], "has_images": images is not None and len(images) > 0},
+                {
+                    "model": model,
+                    "resolved_model": resolved_model,
+                    "prompt": prompt[:100],
+                    "has_images": images is not None and len(images) > 0
+                },
                 {"status": "success"},
                 200,
                 duration
@@ -416,7 +450,12 @@ class GenerationHandler:
             await self._log_request(
                 token.id if token else None,
                 f"generate_{generation_type if model_config else 'unknown'}",
-                {"model": model, "prompt": prompt[:100], "has_images": images is not None and len(images) > 0},
+                {
+                    "model": model,
+                    "resolved_model": resolved_model,
+                    "prompt": prompt[:100],
+                    "has_images": images is not None and len(images) > 0
+                },
                 {"error": error_msg},
                 500,
                 duration
@@ -1053,4 +1092,3 @@ class GenerationHandler:
         except Exception as e:
             # 日志记录失败不影响主流程
             debug_logger.log_error(f"Failed to log request: {e}")
-

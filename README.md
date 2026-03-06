@@ -95,8 +95,8 @@ python main.py
 
 | 模型名称 | 说明| 尺寸 |
 |---------|--------|--------|
-| `gemini-2.5-flash-image-landscape` | 图/文生图 | 横屏 |
-| `gemini-2.5-flash-image-portrait` | 图/文生图 | 竖屏 |
+| `gemini-3.1-flash-image-landscape` | 图/文生图 | 横屏 |
+| `gemini-3.1-flash-image-portrait` | 图/文生图 | 竖屏 |
 | `gemini-3.0-pro-image-landscape` | 图/文生图 | 横屏 |
 | `gemini-3.0-pro-image-portrait` | 图/文生图 | 竖屏 |
 | `imagen-4.0-generate-preview-landscape` | 图/文生图 | 横屏 |
@@ -145,7 +145,7 @@ curl -X POST "http://localhost:8000/v1/chat/completions" \
   -H "Authorization: Bearer han1234" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gemini-2.5-flash-image-landscape",
+    "model": "gemini-3.1-flash-image-landscape",
     "messages": [
       {
         "role": "user",
