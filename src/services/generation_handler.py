@@ -231,6 +231,52 @@ MODEL_CONFIG = {
         "max_images": None  # 不限制
     },
 
+    # ========== 多图生成 (R2V - Reference Images to Video) veo_3_1 ==========
+    # 当前上游协议最多支持 3 张参考图
+
+    # veo_3_1_r2v_fast (横竖屏)
+    "veo_3_1_r2v_fast_portrait": {
+        "type": "video",
+        "video_type": "r2v",
+        "model_key": "veo_3_1_r2v_fast_portrait",
+        "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+        "supports_images": True,
+        "min_images": 0,
+        "max_images": 3
+    },
+    "veo_3_1_r2v_fast_landscape": {
+        "type": "video",
+        "video_type": "r2v",
+        "model_key": "veo_3_1_r2v_fast_landscape",
+        "aspect_ratio": "VIDEO_ASPECT_RATIO_LANDSCAPE",
+        "supports_images": True,
+        "min_images": 0,
+        "max_images": 3
+    },
+
+    # veo_3_1_r2v_fast 4K 放大版 (横竖屏)
+    # - Ultra 用户放大到 4K，普通用户放大到 1080P
+    "veo_3_1_r2v_fast_portrait_4k": {
+        "type": "video",
+        "video_type": "r2v",
+        "model_key": "veo_3_1_r2v_fast_portrait",
+        "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+        "supports_images": True,
+        "min_images": 0,
+        "max_images": 3,
+        "upsample": {"resolution": "VIDEO_RESOLUTION_4K", "model_key": "veo_3_1_upsampler_4k"}
+    },
+    "veo_3_1_r2v_fast_landscape_4k": {
+        "type": "video",
+        "video_type": "r2v",
+        "model_key": "veo_3_1_r2v_fast_landscape",
+        "aspect_ratio": "VIDEO_ASPECT_RATIO_LANDSCAPE",
+        "supports_images": True,
+        "min_images": 0,
+        "max_images": 3,
+        "upsample": {"resolution": "VIDEO_RESOLUTION_4K", "model_key": "veo_3_1_upsampler_4k"}
+    },
+
     # ========== 视频放大 (Video Upsampler) ==========
     # 仅 veo_3_1 支持，先生成视频后自动放大到 4K，可能需要 30 分钟
 
@@ -744,6 +790,14 @@ class GenerationHandler:
                         model_config = {**model_config, "model_key": "veo_3_1_i2v_s_fast_portrait_ultra_fl"}
                     debug_logger.log_info(f"[GENERATION] 高级会员升级模型: {original_model_key} -> {model_config['model_key']} (图片数: {image_count})")
 
+                # ===== 多图视频 R2V (仅快速模型有 Ultra) =====
+                elif original_model_key == "veo_3_1_r2v_fast_landscape":
+                    model_config = {**model_config, "model_key": "veo_3_1_r2v_fast_landscape_ultra"}
+                    debug_logger.log_info(f"[GENERATION] 高级会员升级模型: {original_model_key} -> {model_config['model_key']}")
+                elif original_model_key == "veo_3_1_r2v_fast_portrait":
+                    model_config = {**model_config, "model_key": "veo_3_1_r2v_fast_portrait_ultra"}
+                    debug_logger.log_info(f"[GENERATION] 高级会员升级模型: {original_model_key} -> {model_config['model_key']}")
+
             # ===== 所有用户 I2V 模型：1张图时去掉 _fl 后缀 =====
             # 注意：这个逻辑必须在高级会员升级之后执行，对所有用户生效
             if video_type == "i2v" and image_count == 1:
@@ -773,10 +827,14 @@ class GenerationHandler:
                     yield self._create_error_response(error_msg)
                     return
 
-            # R2V: 多图生成 - 支持多张图片,不限制数量
+            # R2V: 多图生成 - 最多支持 3 张参考图
             elif video_type == "r2v":
-                # 不再限制最大图片数量
-                pass
+                if max_images is not None and image_count > max_images:
+                    error_msg = f"❌ 多图视频模型最多支持 {max_images} 张参考图,当前提供了 {image_count} 张"
+                    if stream:
+                        yield self._create_stream_chunk(f"{error_msg}\n")
+                    yield self._create_error_response(error_msg)
+                    return
 
             # ========== 上传图片 ==========
             start_media_id = None
