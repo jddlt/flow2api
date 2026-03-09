@@ -229,6 +229,51 @@ MODEL_CONFIG = {
         "supports_images": True,
         "min_images": 0,
         "max_images": None  # 不限制
+    },
+
+    # ========== 视频放大 (Video Upsampler) ==========
+    # 仅 veo_3_1 支持，先生成视频后自动放大到 4K，可能需要 30 分钟
+
+    # T2V 4K 放大版 (横屏)
+    "veo_3_1_t2v_fast_landscape_4k": {
+        "type": "video",
+        "video_type": "t2v",
+        "model_key": "veo_3_1_t2v_fast",
+        "aspect_ratio": "VIDEO_ASPECT_RATIO_LANDSCAPE",
+        "supports_images": False,
+        "upsample": {"resolution": "VIDEO_RESOLUTION_4K", "model_key": "veo_3_1_upsampler_4k"}
+    },
+    # T2V 4K 放大版 (竖屏)
+    "veo_3_1_t2v_fast_portrait_4k": {
+        "type": "video",
+        "video_type": "t2v",
+        "model_key": "veo_3_1_t2v_fast_portrait",
+        "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+        "supports_images": False,
+        "upsample": {"resolution": "VIDEO_RESOLUTION_4K", "model_key": "veo_3_1_upsampler_4k"}
+    },
+
+    # I2V 4K 放大版 (横屏)
+    "veo_3_1_i2v_s_fast_fl_landscape_4k": {
+        "type": "video",
+        "video_type": "i2v",
+        "model_key": "veo_3_1_i2v_s_fast_fl",
+        "aspect_ratio": "VIDEO_ASPECT_RATIO_LANDSCAPE",
+        "supports_images": True,
+        "min_images": 1,
+        "max_images": 2,
+        "upsample": {"resolution": "VIDEO_RESOLUTION_4K", "model_key": "veo_3_1_upsampler_4k"}
+    },
+    # I2V 4K 放大版 (竖屏)
+    "veo_3_1_i2v_s_fast_fl_portrait_4k": {
+        "type": "video",
+        "video_type": "i2v",
+        "model_key": "veo_3_1_i2v_s_fast_portrait_fl",
+        "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
+        "supports_images": True,
+        "min_images": 1,
+        "max_images": 2,
+        "upsample": {"resolution": "VIDEO_RESOLUTION_4K", "model_key": "veo_3_1_upsampler_4k"}
     }
 }
 
@@ -850,11 +895,14 @@ class GenerationHandler:
             )
             await self.db.create_task(task)
 
+            # 获取放大配置 (如果有)
+            upsample_config = model_config.get("upsample")
+
             # 轮询结果
             if stream:
                 yield self._create_stream_chunk(f"视频生成中...\n")
 
-            async for chunk in self._poll_video_result(token, operations, stream):
+            async for chunk in self._poll_video_result(token, project_id, operations, stream, upsample_config, model_config["aspect_ratio"]):
                 yield chunk
 
         finally:
@@ -865,8 +913,11 @@ class GenerationHandler:
     async def _poll_video_result(
         self,
         token,
+        project_id: str,
         operations: List[Dict],
-        stream: bool
+        stream: bool,
+        upsample_config: Optional[Dict] = None,
+        aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE"
     ) -> AsyncGenerator:
         """轮询视频生成结果"""
 
@@ -898,10 +949,58 @@ class GenerationHandler:
                     metadata = operation["operation"].get("metadata", {})
                     video_info = metadata.get("video", {})
                     video_url = video_info.get("fifeUrl")
+                    video_media_id = video_info.get("name")
 
                     if not video_url:
                         yield self._create_error_response("视频URL为空")
                         return
+
+                    # ========== 视频高清放大处理 ==========
+                    if upsample_config and video_media_id:
+                        # 根据会员等级决定放大分辨率
+                        # Ultra 会员 (PAYGATE_TIER_TWO) -> 4K
+                        # 普通会员 -> 1080P
+                        if token.user_paygate_tier == "PAYGATE_TIER_TWO":
+                            actual_resolution = "VIDEO_RESOLUTION_4K"
+                            actual_model_key = "veo_3_1_upsampler_4k"
+                            resolution_name = "4K"
+                        else:
+                            actual_resolution = "VIDEO_RESOLUTION_1080P"
+                            actual_model_key = "veo_3_1_upsampler_1080p"
+                            resolution_name = "1080P"
+
+                        if stream:
+                            yield self._create_stream_chunk(f"\n视频生成完成，开始 {resolution_name} 放大处理...（可能需要 30 分钟）\n")
+
+                        try:
+                            # 提交放大任务
+                            upsample_result = await self.flow_client.upsample_video(
+                                at=token.at,
+                                project_id=project_id,
+                                video_media_id=video_media_id,
+                                aspect_ratio=aspect_ratio,
+                                resolution=actual_resolution,
+                                model_key=actual_model_key
+                            )
+
+                            upsample_operations = upsample_result.get("operations", [])
+                            if upsample_operations:
+                                if stream:
+                                    yield self._create_stream_chunk("放大任务已提交，继续轮询...\n")
+
+                                # 递归轮询放大结果（不再放大）
+                                async for chunk in self._poll_video_result(
+                                    token, project_id, upsample_operations, stream, None, aspect_ratio
+                                ):
+                                    yield chunk
+                                return
+                            else:
+                                if stream:
+                                    yield self._create_stream_chunk("⚠️ 放大任务创建失败，返回原始视频\n")
+                        except Exception as e:
+                            debug_logger.log_error(f"Video upsample failed: {str(e)}")
+                            if stream:
+                                yield self._create_stream_chunk(f"⚠️ 放大失败: {str(e)}，返回原始视频\n")
 
                     # 缓存视频 (如果启用)
                     local_url = video_url

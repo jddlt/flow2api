@@ -644,6 +644,69 @@ class FlowClient:
 
         return result
 
+    # ========== 视频放大 (Video Upsampler) ==========
+
+    async def upsample_video(
+        self,
+        at: str,
+        project_id: str,
+        video_media_id: str,
+        aspect_ratio: str,
+        resolution: str,
+        model_key: str,
+    ) -> dict:
+        """视频放大到 4K，返回 task_id
+
+        Args:
+            at: Access Token
+            project_id: 项目ID
+            video_media_id: 视频的 mediaId (从生成结果 metadata.video.name 获取)
+            aspect_ratio: 视频宽高比 VIDEO_ASPECT_RATIO_PORTRAIT/LANDSCAPE
+            resolution: VIDEO_RESOLUTION_4K
+            model_key: veo_3_1_upsampler_4k
+
+        Returns:
+            同 generate_video_text
+        """
+        url = f"{self.api_base_url}/video:batchAsyncGenerateVideoUpsampleVideo"
+
+        # 获取 reCAPTCHA token - 视频放大使用 VIDEO_GENERATION action
+        recaptcha_token = await self._get_recaptcha_token(project_id, "VIDEO_GENERATION") or ""
+        session_id = self._generate_session_id()
+        scene_id = str(uuid.uuid4())
+
+        json_data = {
+            "requests": [{
+                "aspectRatio": aspect_ratio,
+                "resolution": resolution,
+                "seed": random.randint(1, 99999),
+                "videoInput": {
+                    "mediaId": video_media_id
+                },
+                "videoModelKey": model_key,
+                "metadata": {
+                    "sceneId": scene_id
+                }
+            }],
+            "clientContext": {
+                "recaptchaContext": {
+                    "token": recaptcha_token,
+                    "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB"
+                },
+                "sessionId": session_id
+            }
+        }
+
+        result = await self._make_request(
+            method="POST",
+            url=url,
+            json_data=json_data,
+            use_at=True,
+            at_token=at
+        )
+
+        return result
+
     # ========== 任务轮询 (使用AT) ==========
 
     async def check_video_status(self, at: str, operations: List[Dict]) -> dict:
