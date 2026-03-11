@@ -24,16 +24,33 @@ MODEL_CONFIG = {
         "aspect_ratio": "IMAGE_ASPECT_RATIO_PORTRAIT"
     },
 
+    # 图片生成 - NARWHAL 高清化版本 (自动 2K/4K)
+    # Ultra 会员放大到 4K，普通会员放大到 2K
+    "gemini-3.1-flash-image-landscape-upsample": {
+        "type": "image",
+        "model_name": "NARWHAL",
+        "aspect_ratio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+        "image_upsample": True
+    },
+    "gemini-3.1-flash-image-portrait-upsample": {
+        "type": "image",
+        "model_name": "NARWHAL",
+        "aspect_ratio": "IMAGE_ASPECT_RATIO_PORTRAIT",
+        "image_upsample": True
+    },
+
     # 图片生成 - GEM_PIX_2 (Gemini 3.0 Pro)
     "gemini-3.0-pro-image-landscape": {
         "type": "image",
         "model_name": "GEM_PIX_2",
-        "aspect_ratio": "IMAGE_ASPECT_RATIO_LANDSCAPE"
+        "aspect_ratio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+        "image_upsample": True
     },
     "gemini-3.0-pro-image-portrait": {
         "type": "image",
         "model_name": "GEM_PIX_2",
-        "aspect_ratio": "IMAGE_ASPECT_RATIO_PORTRAIT"
+        "aspect_ratio": "IMAGE_ASPECT_RATIO_PORTRAIT",
+        "image_upsample": True
     },
 
     # 图片生成 - IMAGEN_3_5 (Imagen 4.0)
@@ -328,6 +345,8 @@ MODEL_CONFIG = {
 MODEL_ALIASES = {
     "gemini-2.5-flash-image-landscape": "gemini-3.1-flash-image-landscape",
     "gemini-2.5-flash-image-portrait": "gemini-3.1-flash-image-portrait",
+    "gemini-2.5-flash-image-landscape-upsample": "gemini-3.1-flash-image-landscape-upsample",
+    "gemini-2.5-flash-image-portrait-upsample": "gemini-3.1-flash-image-portrait-upsample",
 }
 
 
@@ -631,9 +650,9 @@ class GenerationHandler:
             image_data = media[0]["image"]["generatedImage"]
             image_url = image_data["fifeUrl"]
 
-            # GEM_PIX_2 模型需要高清化处理
+            # 支持高清化的模型自动升级 (GEM_PIX_2 / NARWHAL-upsample 等)
             debug_logger.log_info(f"[GENERATION] model_config: {model_config}, model_name: {model_config.get('model_name')}")
-            if model_config["model_name"] == "GEM_PIX_2":
+            if model_config.get("image_upsample"):
                 try:
                     # 根据会员等级选择分辨率
                     if token.user_paygate_tier == "PAYGATE_TIER_TWO":
