@@ -43,10 +43,23 @@ MODEL_CONFIG = {
     "gemini-3.0-pro-image-landscape": {
         "type": "image",
         "model_name": "GEM_PIX_2",
+        "aspect_ratio": "IMAGE_ASPECT_RATIO_LANDSCAPE"
+    },
+    "gemini-3.0-pro-image-portrait": {
+        "type": "image",
+        "model_name": "GEM_PIX_2",
+        "aspect_ratio": "IMAGE_ASPECT_RATIO_PORTRAIT"
+    },
+
+    # 图片生成 - GEM_PIX_2 高清化版本 (自动 2K/4K)
+    # Ultra 会员放大到 4K，普通会员放大到 2K
+    "gemini-3.0-pro-image-landscape-upsample": {
+        "type": "image",
+        "model_name": "GEM_PIX_2",
         "aspect_ratio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
         "image_upsample": True
     },
-    "gemini-3.0-pro-image-portrait": {
+    "gemini-3.0-pro-image-portrait-upsample": {
         "type": "image",
         "model_name": "GEM_PIX_2",
         "aspect_ratio": "IMAGE_ASPECT_RATIO_PORTRAIT",
