@@ -23,6 +23,21 @@ MODEL_CONFIG = {
         "model_name": "NARWHAL",
         "aspect_ratio": "IMAGE_ASPECT_RATIO_PORTRAIT"
     },
+    "gemini-3.1-flash-image-square": {
+        "type": "image",
+        "model_name": "NARWHAL",
+        "aspect_ratio": "IMAGE_ASPECT_RATIO_SQUARE"
+    },
+    "gemini-3.1-flash-image-four-three": {
+        "type": "image",
+        "model_name": "NARWHAL",
+        "aspect_ratio": "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE"
+    },
+    "gemini-3.1-flash-image-three-four": {
+        "type": "image",
+        "model_name": "NARWHAL",
+        "aspect_ratio": "IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR"
+    },
 
     # 图片生成 - NARWHAL 高清化版本 (自动 2K/4K)
     # Ultra 会员放大到 4K，普通会员放大到 2K
@@ -38,6 +53,24 @@ MODEL_CONFIG = {
         "aspect_ratio": "IMAGE_ASPECT_RATIO_PORTRAIT",
         "image_upsample": True
     },
+    "gemini-3.1-flash-image-square-upsample": {
+        "type": "image",
+        "model_name": "NARWHAL",
+        "aspect_ratio": "IMAGE_ASPECT_RATIO_SQUARE",
+        "image_upsample": True
+    },
+    "gemini-3.1-flash-image-four-three-upsample": {
+        "type": "image",
+        "model_name": "NARWHAL",
+        "aspect_ratio": "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE",
+        "image_upsample": True
+    },
+    "gemini-3.1-flash-image-three-four-upsample": {
+        "type": "image",
+        "model_name": "NARWHAL",
+        "aspect_ratio": "IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR",
+        "image_upsample": True
+    },
 
     # 图片生成 - GEM_PIX_2 (Gemini 3.0 Pro)
     "gemini-3.0-pro-image-landscape": {
@@ -49,6 +82,21 @@ MODEL_CONFIG = {
         "type": "image",
         "model_name": "GEM_PIX_2",
         "aspect_ratio": "IMAGE_ASPECT_RATIO_PORTRAIT"
+    },
+    "gemini-3.0-pro-image-square": {
+        "type": "image",
+        "model_name": "GEM_PIX_2",
+        "aspect_ratio": "IMAGE_ASPECT_RATIO_SQUARE"
+    },
+    "gemini-3.0-pro-image-four-three": {
+        "type": "image",
+        "model_name": "GEM_PIX_2",
+        "aspect_ratio": "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE"
+    },
+    "gemini-3.0-pro-image-three-four": {
+        "type": "image",
+        "model_name": "GEM_PIX_2",
+        "aspect_ratio": "IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR"
     },
 
     # 图片生成 - GEM_PIX_2 高清化版本 (自动 2K/4K)
@@ -63,6 +111,24 @@ MODEL_CONFIG = {
         "type": "image",
         "model_name": "GEM_PIX_2",
         "aspect_ratio": "IMAGE_ASPECT_RATIO_PORTRAIT",
+        "image_upsample": True
+    },
+    "gemini-3.0-pro-image-square-upsample": {
+        "type": "image",
+        "model_name": "GEM_PIX_2",
+        "aspect_ratio": "IMAGE_ASPECT_RATIO_SQUARE",
+        "image_upsample": True
+    },
+    "gemini-3.0-pro-image-four-three-upsample": {
+        "type": "image",
+        "model_name": "GEM_PIX_2",
+        "aspect_ratio": "IMAGE_ASPECT_RATIO_LANDSCAPE_FOUR_THREE",
+        "image_upsample": True
+    },
+    "gemini-3.0-pro-image-three-four-upsample": {
+        "type": "image",
+        "model_name": "GEM_PIX_2",
+        "aspect_ratio": "IMAGE_ASPECT_RATIO_PORTRAIT_THREE_FOUR",
         "image_upsample": True
     },
 
