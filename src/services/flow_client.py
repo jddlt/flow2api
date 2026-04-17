@@ -368,12 +368,20 @@ class FlowClient:
             "seed": random.randint(1, 99999),
             "imageModelName": model_name,
             "imageAspectRatio": aspect_ratio,
-            "prompt": prompt,
+            "structuredPrompt": {
+                "parts": [{
+                    "text": prompt
+                }]
+            },
             "imageInputs": image_inputs or []
         }
 
         json_data = {
             "clientContext": client_context,
+            "mediaGenerationContext": {
+                "batchId": str(uuid.uuid4())
+            },
+            "useNewMedia": True,
             "requests": [request_data]
         }
 

@@ -43,6 +43,30 @@ class _CaptchaSession:
 
 
 class FlowClientProtocolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_generate_image_uses_structured_prompt_and_new_media_flags(self):
+        client = FlowClient(_ProxyManagerStub())
+        client._get_recaptcha_token = AsyncMock(return_value="captcha-token")
+        client._make_request = AsyncMock(return_value={"media": [{"name": "media-1"}]})
+
+        result = await client.generate_image(
+            at="at-token",
+            project_id="project-1",
+            prompt="reference prompt",
+            model_name="GEM_PIX_2",
+            aspect_ratio="IMAGE_ASPECT_RATIO_LANDSCAPE",
+            image_inputs=[{"name": "media-input-1", "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"}],
+        )
+
+        payload = client._make_request.await_args.kwargs["json_data"]
+        self.assertTrue(payload["useNewMedia"])
+        self.assertIn("mediaGenerationContext", payload)
+        self.assertEqual(
+            payload["requests"][0]["structuredPrompt"]["parts"][0]["text"],
+            "reference prompt",
+        )
+        self.assertNotIn("prompt", payload["requests"][0])
+        self.assertEqual(result["_session_id"], payload["clientContext"]["sessionId"])
+
     async def test_upsample_image_includes_user_tier_and_reuses_session(self):
         client = FlowClient(_ProxyManagerStub())
         client._get_recaptcha_token = AsyncMock(return_value="captcha-token")
