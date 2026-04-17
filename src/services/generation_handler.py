@@ -184,37 +184,24 @@ MODEL_CONFIG = {
         "aspect_ratio": "VIDEO_ASPECT_RATIO_LANDSCAPE",
         "supports_images": False
     },
-
-    # veo_2_1_fast_d_15_t2v (需要新增横竖屏)
-    "veo_2_1_fast_d_15_t2v_portrait": {
+    # veo_3_1_t2v_lite (横竖屏)
+    "veo_3_1_t2v_lite_portrait": {
         "type": "video",
         "video_type": "t2v",
-        "model_key": "veo_2_1_fast_d_15_t2v",
+        "model_key": "veo_3_1_t2v_lite",
         "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
-        "supports_images": False
+        "supports_images": False,
+        "use_v2_model_config": True,
+        "allow_tier_upgrade": False
     },
-    "veo_2_1_fast_d_15_t2v_landscape": {
+    "veo_3_1_t2v_lite_landscape": {
         "type": "video",
         "video_type": "t2v",
-        "model_key": "veo_2_1_fast_d_15_t2v",
+        "model_key": "veo_3_1_t2v_lite",
         "aspect_ratio": "VIDEO_ASPECT_RATIO_LANDSCAPE",
-        "supports_images": False
-    },
-
-    # veo_2_0_t2v (需要新增横竖屏)
-    "veo_2_0_t2v_portrait": {
-        "type": "video",
-        "video_type": "t2v",
-        "model_key": "veo_2_0_t2v",
-        "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
-        "supports_images": False
-    },
-    "veo_2_0_t2v_landscape": {
-        "type": "video",
-        "video_type": "t2v",
-        "model_key": "veo_2_0_t2v",
-        "aspect_ratio": "VIDEO_ASPECT_RATIO_LANDSCAPE",
-        "supports_images": False
+        "supports_images": False,
+        "use_v2_model_config": True,
+        "allow_tier_upgrade": False
     },
 
     # ========== 首尾帧模型 (I2V - Image to Video) ==========
@@ -263,45 +250,51 @@ MODEL_CONFIG = {
         "min_images": 1,
         "max_images": 2
     },
-
-    # veo_2_1_fast_d_15_i2v (需要新增横竖屏)
-    "veo_2_1_fast_d_15_i2v_portrait": {
+    # veo_3_1_i2v_lite (横竖屏，仅首帧)
+    "veo_3_1_i2v_lite_portrait": {
         "type": "video",
         "video_type": "i2v",
-        "model_key": "veo_2_1_fast_d_15_i2v",
+        "model_key": "veo_3_1_i2v_lite",
         "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
         "supports_images": True,
         "min_images": 1,
-        "max_images": 2
+        "max_images": 1,
+        "use_v2_model_config": True,
+        "allow_tier_upgrade": False
     },
-    "veo_2_1_fast_d_15_i2v_landscape": {
+    "veo_3_1_i2v_lite_landscape": {
         "type": "video",
         "video_type": "i2v",
-        "model_key": "veo_2_1_fast_d_15_i2v",
+        "model_key": "veo_3_1_i2v_lite",
         "aspect_ratio": "VIDEO_ASPECT_RATIO_LANDSCAPE",
         "supports_images": True,
         "min_images": 1,
-        "max_images": 2
+        "max_images": 1,
+        "use_v2_model_config": True,
+        "allow_tier_upgrade": False
     },
-
-    # veo_2_0_i2v (需要新增横竖屏)
-    "veo_2_0_i2v_portrait": {
+    # veo_3_1_interpolation_lite (横竖屏，首尾帧)
+    "veo_3_1_interpolation_lite_portrait": {
         "type": "video",
         "video_type": "i2v",
-        "model_key": "veo_2_0_i2v",
+        "model_key": "veo_3_1_interpolation_lite",
         "aspect_ratio": "VIDEO_ASPECT_RATIO_PORTRAIT",
         "supports_images": True,
-        "min_images": 1,
-        "max_images": 2
+        "min_images": 2,
+        "max_images": 2,
+        "use_v2_model_config": True,
+        "allow_tier_upgrade": False
     },
-    "veo_2_0_i2v_landscape": {
+    "veo_3_1_interpolation_lite_landscape": {
         "type": "video",
         "video_type": "i2v",
-        "model_key": "veo_2_0_i2v",
+        "model_key": "veo_3_1_interpolation_lite",
         "aspect_ratio": "VIDEO_ASPECT_RATIO_LANDSCAPE",
         "supports_images": True,
-        "min_images": 1,
-        "max_images": 2
+        "min_images": 2,
+        "max_images": 2,
+        "use_v2_model_config": True,
+        "allow_tier_upgrade": False
     },
 
     # ========== 多图生成 (R2V - Reference Images to Video) ==========
@@ -719,6 +712,7 @@ class GenerationHandler:
                 aspect_ratio=model_config["aspect_ratio"],
                 image_inputs=image_inputs
             )
+            generation_session_id = result.get("_session_id")
 
             # 提取URL和mediaId
             media = result.get("media", [])
@@ -726,7 +720,8 @@ class GenerationHandler:
                 yield self._create_error_response("生成结果为空")
                 return
 
-            image_data = media[0]["image"]["generatedImage"]
+            media_item = media[0]
+            image_data = media_item["image"]["generatedImage"]
             image_url = image_data["fifeUrl"]
 
             # 支持高清化的模型自动升级 (GEM_PIX_2 / NARWHAL-upsample 等)
@@ -744,8 +739,8 @@ class GenerationHandler:
                     if stream:
                         yield self._create_stream_chunk(f"正在进行 {resolution_label} 高清化处理...\n")
 
-                    # 获取 mediaId (从 generatedImage.mediaGenerationId 字段)
-                    media_id = image_data.get("mediaGenerationId")
+                    # 当前上游 upsample 使用顶层 media.name，旧字段仅作为兜底。
+                    media_id = media_item.get("name") or image_data.get("mediaGenerationId")
                     if not media_id:
                         debug_logger.log_warning("[UPSAMPLE] mediaId not found, skipping upsampling")
                     else:
@@ -761,10 +756,12 @@ class GenerationHandler:
                             at=token.at,
                             project_id=project_id,
                             media_id=media_id,
-                            target_resolution=target_resolution
+                            target_resolution=target_resolution,
+                            user_paygate_tier=token.user_paygate_tier or "PAYGATE_TIER_NOT_PAID",
+                            session_id=generation_session_id
                         )
 
-                        encoded_image = upsample_result.get("encodedImage")
+                        encoded_image = upsample_result
                         if encoded_image:
                             # 保存 base64 到缓存文件
                             cached_filename = self.file_cache.save_base64(encoded_image, "image")
@@ -854,6 +851,7 @@ class GenerationHandler:
             supports_images = model_config.get("supports_images", False)
             min_images = model_config.get("min_images", 0)
             max_images = model_config.get("max_images", 0)
+            use_v2_model_config = bool(model_config.get("use_v2_model_config", False))
 
             # 图片数量（需要在模型升级逻辑之前计算）
             image_count = len(images) if images else 0
@@ -993,6 +991,7 @@ class GenerationHandler:
                         aspect_ratio=model_config["aspect_ratio"],
                         start_media_id=start_media_id,
                         end_media_id=end_media_id,
+                        use_v2_model_config=use_v2_model_config,
                         user_paygate_tier=token.user_paygate_tier or "PAYGATE_TIER_ONE"
                     )
                 else:
@@ -1004,6 +1003,7 @@ class GenerationHandler:
                         model_key=model_config["model_key"],
                         aspect_ratio=model_config["aspect_ratio"],
                         start_media_id=start_media_id,
+                        use_v2_model_config=use_v2_model_config,
                         user_paygate_tier=token.user_paygate_tier or "PAYGATE_TIER_ONE"
                     )
 
@@ -1027,6 +1027,7 @@ class GenerationHandler:
                     prompt=prompt,
                     model_key=model_config["model_key"],
                     aspect_ratio=model_config["aspect_ratio"],
+                    use_v2_model_config=use_v2_model_config,
                     user_paygate_tier=token.user_paygate_tier or "PAYGATE_TIER_ONE"
                 )
 

@@ -385,9 +385,29 @@ class FlowClient:
             at_token=at
         )
 
+        result["_session_id"] = session_id
         return result
 
     # ========== 视频生成 (使用AT) - 异步返回 ==========
+
+    def _build_video_text_input(
+        self,
+        prompt: str,
+        use_v2_model_config: bool = False
+    ) -> Dict[str, Any]:
+        """构建视频文案输入，兼容 v1/v2 请求格式。"""
+        if use_v2_model_config:
+            return {
+                "structuredPrompt": {
+                    "parts": [{
+                        "text": prompt
+                    }]
+                }
+            }
+
+        return {
+            "prompt": prompt
+        }
 
     async def generate_video_text(
         self,
@@ -396,6 +416,7 @@ class FlowClient:
         prompt: str,
         model_key: str,
         aspect_ratio: str,
+        use_v2_model_config: bool = False,
         user_paygate_tier: str = "PAYGATE_TIER_ONE"
     ) -> dict:
         """文生视频,返回task_id
@@ -428,20 +449,26 @@ class FlowClient:
         # 构建 clientContext（新格式）
         client_context = self._build_client_context(recaptcha_token, session_id, project_id, user_paygate_tier)
 
+        request_data = {
+            "aspectRatio": aspect_ratio,
+            "seed": random.randint(1, 99999),
+            "textInput": self._build_video_text_input(prompt, use_v2_model_config),
+            "videoModelKey": model_key,
+            "metadata": {
+                "sceneId": scene_id
+            }
+        }
+
         json_data = {
             "clientContext": client_context,
-            "requests": [{
-                "aspectRatio": aspect_ratio,
-                "seed": random.randint(1, 99999),
-                "textInput": {
-                    "prompt": prompt
-                },
-                "videoModelKey": model_key,
-                "metadata": {
-                    "sceneId": scene_id
-                }
-            }]
+            "requests": [request_data]
         }
+
+        if use_v2_model_config:
+            json_data["mediaGenerationContext"] = {
+                "batchId": str(uuid.uuid4())
+            }
+            json_data["useV2ModelConfig"] = True
 
         result = await self._make_request(
             method="POST",
@@ -522,6 +549,7 @@ class FlowClient:
         aspect_ratio: str,
         start_media_id: str,
         end_media_id: str,
+        use_v2_model_config: bool = False,
         user_paygate_tier: str = "PAYGATE_TIER_ONE"
     ) -> dict:
         """收尾帧生成视频,返回task_id
@@ -549,26 +577,32 @@ class FlowClient:
         # 构建 clientContext（新格式）
         client_context = self._build_client_context(recaptcha_token, session_id, project_id, user_paygate_tier)
 
+        request_data = {
+            "aspectRatio": aspect_ratio,
+            "seed": random.randint(1, 99999),
+            "textInput": self._build_video_text_input(prompt, use_v2_model_config),
+            "videoModelKey": model_key,
+            "startImage": {
+                "mediaId": start_media_id
+            },
+            "endImage": {
+                "mediaId": end_media_id
+            },
+            "metadata": {
+                "sceneId": scene_id
+            }
+        }
+
         json_data = {
             "clientContext": client_context,
-            "requests": [{
-                "aspectRatio": aspect_ratio,
-                "seed": random.randint(1, 99999),
-                "textInput": {
-                    "prompt": prompt
-                },
-                "videoModelKey": model_key,
-                "startImage": {
-                    "mediaId": start_media_id
-                },
-                "endImage": {
-                    "mediaId": end_media_id
-                },
-                "metadata": {
-                    "sceneId": scene_id
-                }
-            }]
+            "requests": [request_data]
         }
+
+        if use_v2_model_config:
+            json_data["mediaGenerationContext"] = {
+                "batchId": str(uuid.uuid4())
+            }
+            json_data["useV2ModelConfig"] = True
 
         result = await self._make_request(
             method="POST",
@@ -588,6 +622,7 @@ class FlowClient:
         model_key: str,
         aspect_ratio: str,
         start_media_id: str,
+        use_v2_model_config: bool = False,
         user_paygate_tier: str = "PAYGATE_TIER_ONE"
     ) -> dict:
         """仅首帧生成视频,返回task_id
@@ -615,24 +650,30 @@ class FlowClient:
         # 构建 clientContext（新格式）
         client_context = self._build_client_context(recaptcha_token, session_id, project_id, user_paygate_tier)
 
+        request_data = {
+            "aspectRatio": aspect_ratio,
+            "seed": random.randint(1, 99999),
+            "textInput": self._build_video_text_input(prompt, use_v2_model_config),
+            "videoModelKey": model_key,
+            "startImage": {
+                "mediaId": start_media_id
+            },
+            # 注意: 没有endImage字段,只用首帧
+            "metadata": {
+                "sceneId": scene_id
+            }
+        }
+
         json_data = {
             "clientContext": client_context,
-            "requests": [{
-                "aspectRatio": aspect_ratio,
-                "seed": random.randint(1, 99999),
-                "textInput": {
-                    "prompt": prompt
-                },
-                "videoModelKey": model_key,
-                "startImage": {
-                    "mediaId": start_media_id
-                },
-                # 注意: 没有endImage字段,只用首帧
-                "metadata": {
-                    "sceneId": scene_id
-                }
-            }]
+            "requests": [request_data]
         }
+
+        if use_v2_model_config:
+            json_data["mediaGenerationContext"] = {
+                "batchId": str(uuid.uuid4())
+            }
+            json_data["useV2ModelConfig"] = True
 
         result = await self._make_request(
             method="POST",
@@ -868,7 +909,7 @@ class FlowClient:
                         }
                     }
 
-                    result = await session.post(create_url, json=create_data, impersonate="chrome110")
+                    result = await session.post(create_url, json=create_data)
                     result_json = result.json()
                     task_id = result_json.get('taskId')
 
@@ -883,7 +924,7 @@ class FlowClient:
                             "clientKey": client_key,
                             "taskId": task_id
                         }
-                        result = await session.post(get_url, json=get_data, impersonate="chrome110")
+                        result = await session.post(get_url, json=get_data)
                         result_json = result.json()
 
                         debug_logger.log_info(f"[reCAPTCHA] polling #{i+1}: {result_json}")
@@ -909,8 +950,10 @@ class FlowClient:
         at: str,
         project_id: str,
         media_id: str,
-        target_resolution: str = "UPSAMPLE_IMAGE_RESOLUTION_4K"
-    ) -> dict:
+        target_resolution: str = "UPSAMPLE_IMAGE_RESOLUTION_4K",
+        user_paygate_tier: str = "PAYGATE_TIER_NOT_PAID",
+        session_id: Optional[str] = None
+    ) -> str:
         """图片高清化
 
         Args:
@@ -918,20 +961,25 @@ class FlowClient:
             project_id: 项目ID
             media_id: 原图的 mediaId
             target_resolution: 目标分辨率 (默认 4K)
+            user_paygate_tier: 用户等级
+            session_id: 可选，复用图片生成请求的 sessionId
 
         Returns:
-            {
-                "encodedImage": "base64..."
-            }
+            base64 编码的图片
         """
         url = f"{self.api_base_url}/flow/upsampleImage"
 
         # 获取 reCAPTCHA token
         recaptcha_token = await self._get_recaptcha_token(project_id) or ""
-        session_id = self._generate_session_id()
+        upsample_session_id = session_id or self._generate_session_id()
 
         # 构建 clientContext（新格式）
-        client_context = self._build_client_context(recaptcha_token, session_id, project_id)
+        client_context = self._build_client_context(
+            recaptcha_token,
+            upsample_session_id,
+            project_id,
+            user_paygate_tier
+        )
 
         json_data = {
             "mediaId": media_id,
@@ -947,4 +995,4 @@ class FlowClient:
             at_token=at
         )
 
-        return result
+        return result.get("encodedImage", "")
