@@ -685,7 +685,8 @@ class GenerationHandler:
                     media_id = await self.flow_client.upload_image(
                         token.at,
                         image_bytes,
-                        model_config["aspect_ratio"]
+                        model_config["aspect_ratio"],
+                        project_id=project_id
                     )
                     image_inputs.append({
                         "name": media_id,
@@ -944,7 +945,7 @@ class GenerationHandler:
                     if stream:
                         yield self._create_stream_chunk("上传首帧图片...\n")
                     start_media_id = await self.flow_client.upload_image(
-                        token.at, images[0], model_config["aspect_ratio"]
+                        token.at, images[0], model_config["aspect_ratio"], project_id=project_id
                     )
                     debug_logger.log_info(f"[I2V] 仅上传首帧: {start_media_id}")
 
@@ -953,10 +954,10 @@ class GenerationHandler:
                     if stream:
                         yield self._create_stream_chunk("上传首帧和尾帧图片...\n")
                     start_media_id = await self.flow_client.upload_image(
-                        token.at, images[0], model_config["aspect_ratio"]
+                        token.at, images[0], model_config["aspect_ratio"], project_id=project_id
                     )
                     end_media_id = await self.flow_client.upload_image(
-                        token.at, images[1], model_config["aspect_ratio"]
+                        token.at, images[1], model_config["aspect_ratio"], project_id=project_id
                     )
                     debug_logger.log_info(f"[I2V] 上传首尾帧: {start_media_id}, {end_media_id}")
 
@@ -967,7 +968,7 @@ class GenerationHandler:
 
                 for idx, img in enumerate(images):  # 上传所有图片,不限制数量
                     media_id = await self.flow_client.upload_image(
-                        token.at, img, model_config["aspect_ratio"]
+                        token.at, img, model_config["aspect_ratio"], project_id=project_id
                     )
                     reference_images.append({
                         "imageUsageType": "IMAGE_USAGE_TYPE_ASSET",

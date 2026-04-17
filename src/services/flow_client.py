@@ -264,7 +264,8 @@ class FlowClient:
         self,
         at: str,
         image_bytes: bytes,
-        aspect_ratio: str = "IMAGE_ASPECT_RATIO_LANDSCAPE"
+        aspect_ratio: str = "IMAGE_ASPECT_RATIO_LANDSCAPE",
+        project_id: Optional[str] = None
     ) -> str:
         """上传图片,返回mediaGenerationId
 
@@ -272,6 +273,7 @@ class FlowClient:
             at: Access Token
             image_bytes: 图片字节数据
             aspect_ratio: 图片或视频宽高比（会自动转换为图片格式）
+            project_id: 项目ID（存在时走新版项目级上传接口）
 
         Returns:
             mediaGenerationId (CAM...)
@@ -282,25 +284,38 @@ class FlowClient:
         if aspect_ratio.startswith("VIDEO_"):
             aspect_ratio = aspect_ratio.replace("VIDEO_", "IMAGE_")
 
-        # 转换为JPEG格式（如果不是JPEG）
-        jpeg_bytes = self._ensure_jpeg(image_bytes)
+        mime_type = self._detect_image_mime_type(image_bytes)
+        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
 
-        # 编码为base64
-        image_base64 = base64.b64encode(jpeg_bytes).decode('utf-8')
-
-        url = f"{self.api_base_url}:uploadUserImage"
-        json_data = {
-            "imageInput": {
-                "rawImageBytes": image_base64,
-                "mimeType": "image/jpeg",
+        normalized_project_id = str(project_id or "").strip()
+        if normalized_project_id:
+            ext = "png" if "png" in mime_type else "jpg"
+            url = f"{self.api_base_url}/flow/uploadImage"
+            json_data = {
+                "clientContext": {
+                    "tool": "PINHOLE",
+                    "projectId": normalized_project_id
+                },
+                "fileName": f"flow2api_upload_{int(time.time() * 1000)}.{ext}",
+                "imageBytes": image_base64,
+                "isHidden": False,
                 "isUserUploaded": True,
-                "aspectRatio": aspect_ratio
-            },
-            "clientContext": {
-                "sessionId": self._generate_session_id(),
-                "tool": "ASSET_MANAGER"
+                "mimeType": mime_type
             }
-        }
+        else:
+            url = f"{self.api_base_url}:uploadUserImage"
+            json_data = {
+                "imageInput": {
+                    "rawImageBytes": image_base64,
+                    "mimeType": mime_type,
+                    "isUserUploaded": True,
+                    "aspectRatio": aspect_ratio
+                },
+                "clientContext": {
+                    "sessionId": self._generate_session_id(),
+                    "tool": "ASSET_MANAGER"
+                }
+            }
 
         result = await self._make_request(
             method="POST",
@@ -311,7 +326,10 @@ class FlowClient:
         )
 
         # 返回mediaGenerationId
-        media_id = result["mediaGenerationId"]["mediaGenerationId"]
+        media_id = (
+            result.get("media", {}).get("name")
+            or result.get("mediaGenerationId", {}).get("mediaGenerationId")
+        )
         return media_id
 
     # ========== 图片生成 (使用AT) - 同步返回 ==========
@@ -523,19 +541,27 @@ class FlowClient:
         client_context = self._build_client_context(recaptcha_token, session_id, project_id, user_paygate_tier)
 
         json_data = {
+            "mediaGenerationContext": {
+                "batchId": str(uuid.uuid4())
+            },
             "clientContext": client_context,
             "requests": [{
                 "aspectRatio": aspect_ratio,
                 "seed": random.randint(1, 99999),
                 "textInput": {
-                    "prompt": prompt
+                    "structuredPrompt": {
+                        "parts": [{
+                            "text": prompt
+                        }]
+                    }
                 },
                 "videoModelKey": model_key,
                 "referenceImages": reference_images,
                 "metadata": {
                     "sceneId": scene_id
                 }
-            }]
+            }],
+            "useV2ModelConfig": True
         }
 
         result = await self._make_request(
@@ -817,6 +843,26 @@ class FlowClient:
         )
 
     # ========== 辅助方法 ==========
+
+    def _detect_image_mime_type(self, image_bytes: bytes) -> str:
+        """通过文件头检测图片 MIME 类型。"""
+        if len(image_bytes) < 12:
+            return "image/jpeg"
+
+        if image_bytes[:4] == b'RIFF' and image_bytes[8:12] == b'WEBP':
+            return "image/webp"
+        if image_bytes[:4] == b'\x89PNG':
+            return "image/png"
+        if image_bytes[:3] == b'\xff\xd8\xff':
+            return "image/jpeg"
+        if image_bytes[:6] in (b'GIF87a', b'GIF89a'):
+            return "image/gif"
+        if image_bytes[:2] == b'BM':
+            return "image/bmp"
+        if image_bytes[:6] == b'\x00\x00\x00\x0cjP':
+            return "image/jp2"
+
+        return "image/jpeg"
 
     def _ensure_jpeg(self, image_bytes: bytes) -> bytes:
         """确保图片为JPEG格式，非JPEG则转换"""

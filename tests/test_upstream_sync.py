@@ -43,6 +43,32 @@ class _CaptchaSession:
 
 
 class FlowClientProtocolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_upload_image_uses_project_scoped_flow_upload_endpoint(self):
+        client = FlowClient(_ProxyManagerStub())
+        client._make_request = AsyncMock(return_value={"media": {"name": "media-1"}})
+
+        media_id = await client.upload_image(
+            at="at-token",
+            image_bytes=b"\x89PNG\r\n\x1a\nrest-of-png",
+            aspect_ratio="IMAGE_ASPECT_RATIO_LANDSCAPE",
+            project_id="project-1",
+        )
+
+        self.assertEqual(media_id, "media-1")
+        request = client._make_request.await_args.kwargs
+        self.assertEqual(
+            request["url"],
+            f"{client.api_base_url}/flow/uploadImage",
+        )
+        payload = request["json_data"]
+        self.assertEqual(payload["clientContext"]["tool"], "PINHOLE")
+        self.assertEqual(payload["clientContext"]["projectId"], "project-1")
+        self.assertEqual(payload["mimeType"], "image/png")
+        self.assertTrue(payload["fileName"].endswith(".png"))
+        self.assertEqual(payload["isUserUploaded"], True)
+        self.assertEqual(payload["isHidden"], False)
+        self.assertNotIn("imageInput", payload)
+
     async def test_generate_image_uses_structured_prompt_and_new_media_flags(self):
         client = FlowClient(_ProxyManagerStub())
         client._get_recaptcha_token = AsyncMock(return_value="captcha-token")
@@ -66,6 +92,29 @@ class FlowClientProtocolTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("prompt", payload["requests"][0])
         self.assertEqual(result["_session_id"], payload["clientContext"]["sessionId"])
+
+    async def test_generate_video_reference_images_uses_v2_model_config_payload(self):
+        client = FlowClient(_ProxyManagerStub())
+        client._get_recaptcha_token = AsyncMock(return_value="captcha-token")
+        client._make_request = AsyncMock(return_value={"operations": [{"ok": True}]})
+
+        await client.generate_video_reference_images(
+            at="at-token",
+            project_id="project-1",
+            prompt="r2v prompt",
+            model_key="veo_3_1_r2v_fast_landscape",
+            aspect_ratio="VIDEO_ASPECT_RATIO_LANDSCAPE",
+            reference_images=[{"imageUsageType": "IMAGE_USAGE_TYPE_ASSET", "mediaId": "media-1"}],
+        )
+
+        payload = client._make_request.await_args.kwargs["json_data"]
+        self.assertTrue(payload["useV2ModelConfig"])
+        self.assertIn("mediaGenerationContext", payload)
+        self.assertEqual(
+            payload["requests"][0]["textInput"]["structuredPrompt"]["parts"][0]["text"],
+            "r2v prompt",
+        )
+        self.assertNotIn("prompt", payload["requests"][0]["textInput"])
 
     async def test_upsample_image_includes_user_tier_and_reuses_session(self):
         client = FlowClient(_ProxyManagerStub())
@@ -139,6 +188,94 @@ class FlowClientProtocolTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GenerationHandlerSyncTests(unittest.IsolatedAsyncioTestCase):
+    async def test_image_reference_upload_passes_project_id(self):
+        flow_client = SimpleNamespace(
+            upload_image=AsyncMock(return_value="uploaded-media-1"),
+            generate_image=AsyncMock(
+                return_value={
+                    "_session_id": "session-1",
+                    "media": [
+                        {
+                            "name": "generated-media-1",
+                            "image": {
+                                "generatedImage": {
+                                    "fifeUrl": "https://example.com/image.jpg"
+                                }
+                            },
+                        }
+                    ]
+                }
+            ),
+        )
+        handler = GenerationHandler(
+            flow_client=flow_client,
+            token_manager=None,
+            load_balancer=None,
+            db=None,
+            concurrency_manager=None,
+            proxy_manager=_ProxyManagerStub(),
+        )
+
+        original_cache_enabled = config.cache_enabled
+        config.set_cache_enabled(False)
+        try:
+            token = SimpleNamespace(id=1, at="at-token", user_paygate_tier="PAYGATE_TIER_ONE")
+            model_config = MODEL_CONFIG["gemini-3.0-pro-image-landscape"]
+
+            chunks = [
+                chunk
+                async for chunk in handler._handle_image_generation(
+                    token=token,
+                    project_id="project-1",
+                    model_config=model_config,
+                    prompt="prompt",
+                    images=[b"image-bytes-1"],
+                    stream=False,
+                )
+            ]
+        finally:
+            config.set_cache_enabled(original_cache_enabled)
+
+        self.assertTrue(chunks)
+        self.assertEqual(
+            flow_client.upload_image.await_args.kwargs["project_id"],
+            "project-1",
+        )
+
+    async def test_video_frame_upload_passes_project_id(self):
+        flow_client = SimpleNamespace(
+            upload_image=AsyncMock(return_value="frame-media-1"),
+            generate_video_start_image=AsyncMock(return_value={"operations": []}),
+        )
+        handler = GenerationHandler(
+            flow_client=flow_client,
+            token_manager=None,
+            load_balancer=None,
+            db=SimpleNamespace(create_task=AsyncMock()),
+            concurrency_manager=None,
+            proxy_manager=_ProxyManagerStub(),
+        )
+        token = SimpleNamespace(id=1, at="at-token", user_paygate_tier="PAYGATE_TIER_ONE")
+        model_config = MODEL_CONFIG["veo_3_1_i2v_s_fast_fl_landscape"]
+
+        chunks = [
+            chunk
+            async for chunk in handler._handle_video_generation(
+                token=token,
+                project_id="project-1",
+                model_config=model_config,
+                prompt="prompt",
+                images=[b"frame-1"],
+                stream=False,
+            )
+        ]
+
+        self.assertTrue(chunks)
+        self.assertEqual(
+            flow_client.upload_image.await_args.kwargs["project_id"],
+            "project-1",
+        )
+
     async def test_image_upsample_uses_top_level_media_name(self):
         flow_client = SimpleNamespace(
             generate_image=AsyncMock(
