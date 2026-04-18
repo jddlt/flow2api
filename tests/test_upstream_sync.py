@@ -249,6 +249,39 @@ class TokenManagerSyncTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GenerationHandlerSyncTests(unittest.IsolatedAsyncioTestCase):
+    async def test_video_generation_normalizes_missing_tier_to_not_paid(self):
+        flow_client = SimpleNamespace(
+            generate_video_text=AsyncMock(return_value={"operations": []}),
+        )
+        handler = GenerationHandler(
+            flow_client=flow_client,
+            token_manager=None,
+            load_balancer=None,
+            db=SimpleNamespace(create_task=AsyncMock()),
+            concurrency_manager=None,
+            proxy_manager=_ProxyManagerStub(),
+        )
+        token = SimpleNamespace(id=1, at="at-token", user_paygate_tier=None)
+        model_config = MODEL_CONFIG["veo_3_1_t2v_lite_landscape"]
+
+        chunks = [
+            chunk
+            async for chunk in handler._handle_video_generation(
+                token=token,
+                project_id="project-1",
+                model_config=model_config,
+                prompt="prompt",
+                images=None,
+                stream=False,
+            )
+        ]
+
+        self.assertTrue(chunks)
+        self.assertEqual(
+            flow_client.generate_video_text.await_args.kwargs["user_paygate_tier"],
+            "PAYGATE_TIER_NOT_PAID",
+        )
+
     async def test_image_reference_upload_passes_project_id(self):
         flow_client = SimpleNamespace(
             upload_image=AsyncMock(return_value="uploaded-media-1"),

@@ -432,6 +432,18 @@ def get_model_config(model_id: str) -> Optional[Dict[str, Any]]:
     return MODEL_CONFIG.get(resolve_model_id(model_id))
 
 
+def normalize_user_paygate_tier(user_paygate_tier: Optional[str]) -> str:
+    """Normalize user tier, defaulting unknown values to free tier."""
+    normalized = (user_paygate_tier or "").strip()
+    if normalized in {
+        "PAYGATE_TIER_NOT_PAID",
+        "PAYGATE_TIER_ONE",
+        "PAYGATE_TIER_TWO",
+    }:
+        return normalized
+    return "PAYGATE_TIER_NOT_PAID"
+
+
 class GenerationHandler:
     """统一生成处理器"""
 
@@ -853,6 +865,7 @@ class GenerationHandler:
             min_images = model_config.get("min_images", 0)
             max_images = model_config.get("max_images", 0)
             use_v2_model_config = bool(model_config.get("use_v2_model_config", False))
+            normalized_tier = normalize_user_paygate_tier(token.user_paygate_tier)
 
             # 图片数量（需要在模型升级逻辑之前计算）
             image_count = len(images) if images else 0
@@ -862,7 +875,7 @@ class GenerationHandler:
             # - 2张图（首尾帧）: 带 _fl 后缀
             # - 1张图（仅首帧）: 不带 _fl 后缀
             # 注意：高质量模型（不带 fast）不区分 Ultra，只有快速模型才有 Ultra 版本
-            if token.user_paygate_tier == "PAYGATE_TIER_TWO":
+            if normalized_tier == "PAYGATE_TIER_TWO":
                 original_model_key = model_config["model_key"]
 
                 # ===== 文生视频 T2V (仅快速模型有 Ultra) =====
@@ -993,7 +1006,7 @@ class GenerationHandler:
                         start_media_id=start_media_id,
                         end_media_id=end_media_id,
                         use_v2_model_config=use_v2_model_config,
-                        user_paygate_tier=token.user_paygate_tier or "PAYGATE_TIER_ONE"
+                        user_paygate_tier=normalized_tier
                     )
                 else:
                     # 只有首帧
@@ -1005,7 +1018,7 @@ class GenerationHandler:
                         aspect_ratio=model_config["aspect_ratio"],
                         start_media_id=start_media_id,
                         use_v2_model_config=use_v2_model_config,
-                        user_paygate_tier=token.user_paygate_tier or "PAYGATE_TIER_ONE"
+                        user_paygate_tier=normalized_tier
                     )
 
             # R2V: 多图生成
@@ -1017,7 +1030,7 @@ class GenerationHandler:
                     model_key=model_config["model_key"],
                     aspect_ratio=model_config["aspect_ratio"],
                     reference_images=reference_images,
-                    user_paygate_tier=token.user_paygate_tier or "PAYGATE_TIER_ONE"
+                    user_paygate_tier=normalized_tier
                 )
 
             # T2V 或 R2V无图: 纯文本生成
@@ -1029,7 +1042,7 @@ class GenerationHandler:
                     model_key=model_config["model_key"],
                     aspect_ratio=model_config["aspect_ratio"],
                     use_v2_model_config=use_v2_model_config,
-                    user_paygate_tier=token.user_paygate_tier or "PAYGATE_TIER_ONE"
+                    user_paygate_tier=normalized_tier
                 )
 
             # 获取task_id和operations
@@ -1118,7 +1131,7 @@ class GenerationHandler:
                         # 根据会员等级决定放大分辨率
                         # Ultra 会员 (PAYGATE_TIER_TWO) -> 4K
                         # 普通会员 -> 1080P
-                        if token.user_paygate_tier == "PAYGATE_TIER_TWO":
+                        if normalized_tier == "PAYGATE_TIER_TWO":
                             actual_resolution = "VIDEO_RESOLUTION_4K"
                             actual_model_key = "veo_3_1_upsampler_4k"
                             resolution_name = "4K"
