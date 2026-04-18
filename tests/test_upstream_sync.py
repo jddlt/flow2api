@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from src.core.config import config
 from src.services.flow_client import FlowClient
 from src.services.generation_handler import GenerationHandler, MODEL_CONFIG
+from src.services.token_manager import TokenManager
 
 
 class _ProxyManagerStub:
@@ -185,6 +186,66 @@ class FlowClientProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(len(session.calls), 2)
         for _, kwargs in session.calls:
             self.assertNotIn("impersonate", kwargs)
+
+
+class TokenManagerSyncTests(unittest.IsolatedAsyncioTestCase):
+    async def test_refresh_credits_updates_user_paygate_tier(self):
+        token = SimpleNamespace(id=1, at="at-token")
+        db = SimpleNamespace(
+            get_token=AsyncMock(side_effect=[token, token]),
+            update_token=AsyncMock(),
+        )
+        flow_client = SimpleNamespace(
+            get_credits=AsyncMock(
+                return_value={
+                    "credits": 123,
+                    "userPaygateTier": "PAYGATE_TIER_ONE",
+                }
+            )
+        )
+        manager = TokenManager(db, flow_client)
+        manager.is_at_valid = AsyncMock(return_value=True)
+
+        credits = await manager.refresh_credits(1)
+
+        self.assertEqual(credits, 123)
+        db.update_token.assert_awaited_once_with(
+            1,
+            credits=123,
+            user_paygate_tier="PAYGATE_TIER_ONE",
+        )
+
+    async def test_refresh_at_updates_user_paygate_tier_from_credits_response(self):
+        token = SimpleNamespace(id=1, st="st-token")
+        db = SimpleNamespace(
+            get_token=AsyncMock(return_value=token),
+            update_token=AsyncMock(),
+        )
+        flow_client = SimpleNamespace(
+            st_to_at=AsyncMock(
+                return_value={
+                    "access_token": "new-at",
+                    "expires": "2026-04-18T10:00:00.000Z",
+                }
+            ),
+            get_credits=AsyncMock(
+                return_value={
+                    "credits": 456,
+                    "userPaygateTier": "PAYGATE_TIER_ONE",
+                }
+            ),
+        )
+        manager = TokenManager(db, flow_client)
+
+        success = await manager._refresh_at(1)
+
+        self.assertTrue(success)
+        self.assertEqual(db.update_token.await_count, 2)
+        self.assertEqual(db.update_token.await_args_list[1].kwargs["credits"], 456)
+        self.assertEqual(
+            db.update_token.await_args_list[1].kwargs["user_paygate_tier"],
+            "PAYGATE_TIER_ONE",
+        )
 
 
 class GenerationHandlerSyncTests(unittest.IsolatedAsyncioTestCase):

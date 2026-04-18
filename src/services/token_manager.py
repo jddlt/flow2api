@@ -310,7 +310,8 @@ class TokenManager:
                     credits_result = await self.flow_client.get_credits(new_at)
                     await self.db.update_token(
                         token_id,
-                        credits=credits_result.get("credits", 0)
+                        credits=credits_result.get("credits", 0),
+                        user_paygate_tier=credits_result.get("userPaygateTier"),
                     )
                 except:
                     pass
@@ -496,7 +497,11 @@ class TokenManager:
             credits = result.get("credits", 0)
 
             # 更新数据库
-            await self.db.update_token(token_id, credits=credits)
+            await self.db.update_token(
+                token_id,
+                credits=credits,
+                user_paygate_tier=result.get("userPaygateTier"),
+            )
 
             return credits
         except Exception as e:
